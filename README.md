@@ -1,4 +1,4 @@
-# GestuBot Tech Report - Data Summary
+# Pointing and Human Dog Interaction
 Background: https://github.com/csci1951a-spring-2024/final-project-gestubots/blob/main/README.md 
 
 detailed data breakdown is in: https://github.com/csci1951a-spring-2024/final-project-gestubots/blob/main/data/README.md
