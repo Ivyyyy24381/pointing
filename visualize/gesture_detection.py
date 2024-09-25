@@ -484,7 +484,7 @@ class PointingGestureDetector:
 if __name__ == "__main__":
         
     parser = argparse.ArgumentParser(description="Pointing Gesture Detection")
-    parser.add_argument('--mode', type=str, required=True, choices=['live', 'video', 'rs'], help="Mode to run the gesture detection. Choices: 'live', 'video', 'spot'")
+    parser.add_argument('--mode', type=str, choices=['live', 'video', 'rs'], help="Mode to run the gesture detection. Choices: 'live', 'video', 'spot'")
     parser.add_argument('--video_path', type=str, help="Path to the local video file. Required if mode is 'video'")
     parser.add_argument('--csv_path', type=str, help="Path to the saved csv file.'")
 
@@ -506,6 +506,9 @@ if __name__ == "__main__":
     elif args.mode == 'rs':
         print("Running in spot video mode...")
         detector.run_stream_rs()
+    
+    else:
+        detector.run_stream()
         
     detector.data.to_csv(args.csv_path, index=False)
     print(f"Data saved to {args.csv_path}")
