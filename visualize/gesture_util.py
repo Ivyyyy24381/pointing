@@ -26,12 +26,32 @@ def calculate_vector(point1, point2):
 
 
 def visualize_vector(image, start, vector, color=(0, 255, 0)):
+    
+    
     if start is None:
         return 
+    # Get image dimensions
+    height, width = image.shape[:2]
+    
     start_point = (int(start.x * image.shape[1]), int(start.y * image.shape[0]))
     
-    end_point = (int(start_point[0] + vector[0] * 750),
-                    int(start_point[1]+ vector[1] * 750)  # Scaling for visibility
+    # # Normalize the vector
+    # vector = np.array(vector)
+    # vector = vector / np.linalg.norm(vector)
+
+    # # Calculate the scale factor to extend to the image edges
+    # # Get the max scaling factor for x or y to reach the edge of the screen
+    # scale_x = width / abs(vector[0]) if vector[0] != 0 else np.inf
+    # scale_y = height / abs(vector[1]) if vector[1] != 0 else np.inf
+    # scale_factor = min(scale_x, scale_y)
+
+    # # Compute the end point that extends to the edge of the screen
+    # end_point = (int(start_point[0] + vector[0] * scale_factor),
+    #              int(start_point[1] + vector[1] * scale_factor))
+
+
+    end_point = (int(start_point[0] + vector[0] * 7500),
+                    int(start_point[1]+ vector[1] * 7500)  # Scaling for visibility
                     )
     
     cv2.arrowedLine(image, start_point, end_point, color, 3)
