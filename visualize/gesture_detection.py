@@ -6,7 +6,7 @@ from gesture_util import *
 import sys
 import argparse
 import pandas as pd
-import pyrealsense2 as rs
+# import pyrealsense2 as rs
 class PointingGestureDetector:
     __ELBOW_WRIST_COLOR = (13, 204, 255)
     __SHOULDER_WRIST_COLOR = (38, 115, 255)
@@ -367,7 +367,7 @@ class PointingGestureDetector:
         visualize_vector(image, wrist, vectors["eye_to_wrist"], self.__EYE_WRIST_COLOR)
         visualize_vector(image, wrist, vectors["nose_to_wrist"], self.__NOSE_WRIST_COLOR)
         if index_finger_tip is not None:
-            visualize_vector(image, index_finger_tip, vectors["wrist_to_index"], self.__WRIST_INDEX_COLOR)
+            visualize_vector(image, wrist, vectors["wrist_to_index"], self.__WRIST_INDEX_COLOR)
         if index_finger_mcp is not None:
             visualize_vector(image, index_finger_tip, vectors["index_finger"], self.__INDEX_COLOR)
 
