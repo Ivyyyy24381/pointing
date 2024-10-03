@@ -268,7 +268,7 @@ def is_pointing_arm(pose_landmarks):
             arm_handedness = 'Right'
             confidence = r_arm_raise_angle / (l_arm_raise_angle + r_arm_raise_angle)
             
-        is_pointing = confidence > 0.6
+        is_pointing = confidence > 0.5
 
         return arm_handedness, confidence, is_pointing
 

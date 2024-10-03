@@ -18,7 +18,7 @@ class PointingGestureDetector:
     __GAZE_COLOR = (122, 110, 84)
 
     def __init__(self):
-        self.hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.7, min_tracking_confidence=0.4)
+        self.hands = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.4)
         self.pose = mp.solutions.pose.Pose(static_image_mode=False, min_detection_confidence=0.7, min_tracking_confidence = 0.7, smooth_landmarks = True, model_complexity = 2)
         self.pointing = False
         self.frame = 0
@@ -267,6 +267,14 @@ class PointingGestureDetector:
         except (IndexError, TypeError):
             index_finger_tip = None
             index_finger_mcp = None
+        if index_finger_tip is None:
+            try:
+                index_finger_tip = landmarks.landmark[
+                    mp.solutions.pose.PoseLandmark.LEFT_INDEX if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_INDEX
+                ]
+            except (IndexError, AttributeError):
+                index_finger_tip = None
+            
         index_finger_vector = calculate_vector(index_finger_mcp, index_finger_tip)
         wrist_to_index_vector = calculate_vector(wrist, index_finger_tip)
    
@@ -293,6 +301,13 @@ class PointingGestureDetector:
             index_finger_tip = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
         except (IndexError, TypeError):
             index_finger_tip = None
+        if index_finger_tip is None:
+            try: 
+                index_finger_tip = landmarks.landmark[
+                mp.solutions.pose.PoseLandmark.LEFT_INDEX if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_INDEX
+            ]
+            except (IndexError, AttributeError):
+                index_finger_tip = None
         
         try:
             index_finger_mcp = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
@@ -460,8 +475,10 @@ class PointingGestureDetector:
 
             # Flip image horizontally if necessary, else remove the flip
             # image = cv2.flip(image, 1)
-
-            processed_image = self.process_frame(image)
+            height, width, channels = image.shape
+            crop_img = image[0:height *3 //8, :]
+            
+            processed_image = self.process_frame(crop_img)
             cv2.imshow('Pointing Gesture Detection', processed_image)
             import os
             output_path = video_path[0:-4]
