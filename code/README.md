@@ -9,7 +9,7 @@ run:
 python ~/Documents/GitHub/pointing/code/batch_split_bag.py --csv_filepath ADD_YOUR_CSV_PATH
 
 
-This csv runs the below sample code(note to self):
+This csv runs the below sample code(note to self), no need to run:
 python ~/Documents/GitHub/pointing/code/bag_to_video.py --bag_filepath 20240319_105021.bag --date 0319 --trial 2 --start_sec 220 --end_sec 237
 
 # 3. after the code finish running, add the output to the corresponding folder. ensure that: 

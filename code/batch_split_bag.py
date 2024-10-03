@@ -21,7 +21,6 @@ def main():
 
     # Load the CSV into a pandas DataFrame
     df = pd.read_csv(args.csv_filepath, header = 2)
-    # df = pd.read_csv('/home/xhe71/Downloads/0319.csv', header = 2)
 
     # Generate the commands based on the CSV content
     generate_commands(df)

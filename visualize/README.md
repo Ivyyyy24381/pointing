@@ -13,3 +13,5 @@ live stream mode: python gesture_detection.py --mode live
 realsense stream mode: python gesture_detection.py --mode rs
 
 local video mode: python gesture_detection.py --mode video
+
+

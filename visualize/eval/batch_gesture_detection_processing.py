@@ -86,7 +86,7 @@ commands = [
 
 
 commands = [
-    'python pose_detection/eval/run_eval.py --video_path /Users/ivy/Desktop/spot_gesture_eval/0926/2m_left_1.mp4 --csv_path /Users/ivy/Desktop/spot_gesture_eval/0926/2m_left_1.csv  --threshold 0.3 --target_locations -1 0.46 2',
+    'python eval/run_eval.py --video_path /Users/ivy/Desktop/spot_gesture_eval/0926/2m_left_1.mp4 --csv_path /Users/ivy/Desktop/spot_gesture_eval/0926/2m_left_1.csv  --threshold 0.3 --target_locations -1 0.46 2',
     
 ]
 # Run each command in the list
