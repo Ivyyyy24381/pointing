@@ -6,7 +6,7 @@ from gesture_util import *
 import sys
 import argparse
 import pandas as pd
-# import pyrealsense2 as rs
+import pyrealsense2 as rs
 class PointingGestureDetector:
     __ELBOW_WRIST_COLOR = (13, 204, 255)
     __SHOULDER_WRIST_COLOR = (38, 115, 255)
