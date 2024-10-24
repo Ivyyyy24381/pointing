@@ -2,7 +2,7 @@ import os
 import argparse
 from moviepy.editor import VideoFileClip, clips_array
 
-def run_rs_convert(bag_filepath, output_prefix, start_sec, end_sec):
+def run_rs_convert(bag_filepath, output_prefix, start_sec = 0, end_sec = 1000):
     color_dir = os.path.join(output_prefix, "Color/")
     depth_dir = os.path.join(output_prefix, "Depth/")
     
@@ -18,8 +18,8 @@ def run_ffmpeg_convert(output_prefix, framerate=6):
     color_dir = os.path.join(output_prefix, "Color/")
     depth_dir = os.path.join(output_prefix, "Depth/")
     
-    color_video_command = f"ffmpeg -framerate {framerate} -pattern_type glob -i '{color_dir}_Color_*.png' -c:v libx264 -r 30 -pix_fmt yuv420p {output_prefix}_Color.mp4"
-    depth_video_command = f"ffmpeg -framerate {framerate} -pattern_type glob -i '{color_dir}_Depth_*.png' -c:v libx264 -r 30 -pix_fmt yuv420p {output_prefix}_Depth.mp4"
+    color_video_command = f"ffmpeg -y -framerate {framerate} -pattern_type glob -i '{color_dir}_Color_*.png' -c:v libx264 -r 30 -pix_fmt yuv420p {output_prefix}/Color.mp4"
+    depth_video_command = f"ffmpeg -y -framerate {framerate} -pattern_type glob -i '{color_dir}_Depth_*.png' -c:v libx264 -r 30 -pix_fmt yuv420p {output_prefix}/Depth.mp4"
 
     print(f"Running command: {color_video_command}")
     os.system(color_video_command)
@@ -36,7 +36,7 @@ def concat_videos(color_video_path, depth_video_path, output_path):
     video_bottom = video_bottom.resize(width=width)
 
     final_video = clips_array([[video_top], [video_bottom]])
-    final_video.write_videofile(output_path)
+    final_video.write_videofile(output_path, audio = False, threads = 8)
 
 def main():
     # Step 1: Parse the arguments
