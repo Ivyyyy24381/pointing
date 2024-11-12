@@ -170,6 +170,8 @@ class RosbagSlicerGUI:
         frame_idx = 0
         split_points = []
         previous_frames = []  # To store the previous 10 frames
+        red_frame_time = 0
+        green_frame_time = 0
 
         while cap_color.isOpened() and cap_depth.isOpened():
             ret_color, frame_color = cap_color.read()
@@ -177,7 +179,11 @@ class RosbagSlicerGUI:
 
             # Break the loop if no more frames are available
             if not ret_color and not ret_depth:
+
                 print(f"End of video reached at frame index {frame_idx}")
+                if red_found:
+                    split_points.append((red_frame_time, green_frame_time)) 
+                    red_found = False
                 break
 
             # Skip the frame if either color or depth frame is not readable
@@ -210,26 +216,40 @@ class RosbagSlicerGUI:
             if len(previous_frames) > 10:
                 previous_frames.pop()
             # Check for depth < 5 as the start marker (red found when depth < 5 and red is dominant)
-            if not red_found and depth_channel < 5:
-                # Ensure no previous frames in the last 10 frames meet the red criteria
-                if all(prev_depth >= 5 for _, _, prev_depth in previous_frames):
-                    # Compare red and green channels to determine if it's a red marker
-                    if red_channel >= green_channel:  # Red is dominant
-                        red_frame_time = frame_idx / cap_color.get(cv2.CAP_PROP_FPS)  # Convert frame index to time in seconds
-                        red_found = True
-                        print(f"Red frame detected at {red_frame_time} seconds.")
-
-            # Check for depth < 5 as the end marker (green found after red and green is dominant)
-            if red_found and depth_channel < 5:
-                # Ensure no previous frames in the last 10 frames meet the green criteria
-                if all(prev_depth >= 5 for _, _, prev_depth in previous_frames):
-                    # Compare green and red channels to determine if it's a green marker
-                    if green_channel > red_channel:  # Green is dominant
-                        green_frame_time = frame_idx / cap_color.get(cv2.CAP_PROP_FPS)  # Convert frame index to time in seconds
+            
+            if depth_channel < 5:
+                if not red_found and red_channel > green_channel:
+                    red_frame_time = frame_idx / cap_color.get(cv2.CAP_PROP_FPS)  # Convert frame index to time in seconds
+                    red_found = True
+                    print(f"Red frame detected at {red_frame_time} seconds.")
+                elif red_found and green_channel > red_channel:
+                    green_frame_time = frame_idx / cap_color.get(cv2.CAP_PROP_FPS)  # Convert frame index to time in seconds
                         
-                        split_points.append((red_frame_time, green_frame_time))  # Add split point
-                        red_found = False  # Reset for the next red-green pair
-                        print(f"Green frame detected at {green_frame_time} seconds. Split added.")
+                    split_points.append((red_frame_time, green_frame_time))  # Add split point
+                    red_found = False  # Reset for the next red-green pair
+                    print(f"Green frame detected at {green_frame_time} seconds. Split added.")
+
+                    
+            # if not red_found and depth_channel < 5:
+            #     # Ensure no previous frames in the last 10 frames meet the red criteria
+            #     if all(prev_depth >= 5 for _, _, prev_depth in previous_frames):
+            #         # Compare red and green channels to determine if it's a red marker
+            #         if red_channel >= green_channel:  # Red is dominant
+            #             red_frame_time = frame_idx / cap_color.get(cv2.CAP_PROP_FPS)  # Convert frame index to time in seconds
+            #             red_found = True
+            #             print(f"Red frame detected at {red_frame_time} seconds.")
+
+            # # Check for depth < 5 as the end marker (green found after red and green is dominant)
+            # if red_found and depth_channel < 5:
+            #     # Ensure no previous frames in the last 10 frames meet the green criteria
+            #     if all(prev_depth >= 5 for _, _, prev_depth in previous_frames):
+            #         # Compare green and red channels to determine if it's a green marker
+            #         if green_channel > red_channel:  # Green is dominant
+            #             green_frame_time = frame_idx / cap_color.get(cv2.CAP_PROP_FPS)  # Convert frame index to time in seconds
+                        
+            #             split_points.append((red_frame_time, green_frame_time))  # Add split point
+            #             red_found = False  # Reset for the next red-green pair
+            #             print(f"Green frame detected at {green_frame_time} seconds. Split added.")
             frame_idx += 1
 
         cap_color.release()
