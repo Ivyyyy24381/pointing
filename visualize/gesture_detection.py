@@ -6,7 +6,7 @@ from gesture_util import *
 import sys
 import argparse
 import pandas as pd
-import pyrealsense2 as rs
+# import pyrealsense2 as rs
 class PointingGestureDetector:
     __ELBOW_WRIST_COLOR = (13, 204, 255)
     __SHOULDER_WRIST_COLOR = (38, 115, 255)
@@ -221,7 +221,7 @@ class PointingGestureDetector:
         return a dictionary of all vectors and normalized wrist location
         """
         try:
-            wrist = landmarks.landmark[
+            wrist =landmarks.landmark[
                 mp.solutions.pose.PoseLandmark.LEFT_WRIST if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
 
         except (IndexError, TypeError):
@@ -277,7 +277,11 @@ class PointingGestureDetector:
             
         index_finger_vector = calculate_vector(index_finger_mcp, index_finger_tip)
         wrist_to_index_vector = calculate_vector(wrist, index_finger_tip)
-   
+
+        eye_to_index_vector = calculate_vector(eye, index_finger_tip)
+        shoulder_to_index_vector = calculate_vector(shoulder, index_finger_tip)
+        elbow_to_index_vector = calculate_vector(elbow, index_finger_tip)
+        nose_to_index_vector = calculate_vector(nose, index_finger_tip)
 
         return {
             "eye_to_wrist": eye_to_wrist_vector,
@@ -285,7 +289,11 @@ class PointingGestureDetector:
             "elbow_to_wrist": elbow_to_wrist_vector,
             "nose_to_wrist": nose_to_wrist_vector,
             "wrist_to_index": wrist_to_index_vector,
-            "index_finger": index_finger_vector
+            "index_finger": index_finger_vector, 
+            "eye_to_index": eye_to_index_vector,
+            "shoulder_to_index": shoulder_to_index_vector,
+            "elbow_to_index": elbow_to_index_vector,
+            "nose_to_index": nose_to_index_vector
         }
 
     def find_joint_locations(self, pointing_hand, landmarks):
@@ -368,6 +376,10 @@ class PointingGestureDetector:
         visualize_vector(image, wrist, vectors["nose_to_wrist"], self.__NOSE_WRIST_COLOR)
         if index_finger_tip is not None:
             visualize_vector(image, wrist, vectors["wrist_to_index"], self.__WRIST_INDEX_COLOR)
+            visualize_vector(image, index_finger_tip, vectors["shoulder_to_index"], self.__SHOULDER_WRIST_COLOR)
+            visualize_vector(image, index_finger_tip, vectors["elbow_to_index"], self.__ELBOW_WRIST_COLOR)
+            visualize_vector(image, index_finger_tip, vectors["eye_to_index"], self.__EYE_WRIST_COLOR)
+            visualize_vector(image, index_finger_tip, vectors["nose_to_index"], self.__NOSE_WRIST_COLOR)
         if index_finger_mcp is not None:
             visualize_vector(image, index_finger_tip, vectors["index_finger"], self.__INDEX_COLOR)
 
@@ -410,55 +422,55 @@ class PointingGestureDetector:
         cap.release()
         cv2.destroyAllWindows()
 
-    def run_stream_rs(self):
+    # def run_stream_rs(self):
         
-        pipeline = rs.pipeline()
-        config = rs.config()
-        # Get device product line for setting a supporting resolution
-        pipeline_wrapper = rs.pipeline_wrapper(pipeline)
-        pipeline_profile = config.resolve(pipeline_wrapper)
-        device = pipeline_profile.get_device()
-        device_product_line = str(device.get_info(rs.camera_info.product_line))
+    #     pipeline = rs.pipeline()
+    #     config = rs.config()
+    #     # Get device product line for setting a supporting resolution
+    #     pipeline_wrapper = rs.pipeline_wrapper(pipeline)
+    #     pipeline_profile = config.resolve(pipeline_wrapper)
+    #     device = pipeline_profile.get_device()
+    #     device_product_line = str(device.get_info(rs.camera_info.product_line))
 
-        found_rgb = False
-        for s in device.sensors:
-            if s.get_info(rs.camera_info.name) == 'RGB Camera':
-                found_rgb = True
-                break
-        if not found_rgb:
-            print("The demo requires Depth camera with Color sensor")
-            exit(0)
+    #     found_rgb = False
+    #     for s in device.sensors:
+    #         if s.get_info(rs.camera_info.name) == 'RGB Camera':
+    #             found_rgb = True
+    #             break
+    #     if not found_rgb:
+    #         print("The demo requires Depth camera with Color sensor")
+    #         exit(0)
 
-        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    #     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    #     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
-        pipeline.start(config)
-        try:
-            while True:
+    #     pipeline.start(config)
+    #     try:
+    #         while True:
 
-                # Wait for a coherent pair of frames: depth and color
-                frames = pipeline.wait_for_frames()
-                depth_frame = frames.get_depth_frame()
-                color_frame = frames.get_color_frame()
-                if not depth_frame or not color_frame:
-                    continue
+    #             # Wait for a coherent pair of frames: depth and color
+    #             frames = pipeline.wait_for_frames()
+    #             depth_frame = frames.get_depth_frame()
+    #             color_frame = frames.get_color_frame()
+    #             if not depth_frame or not color_frame:
+    #                 continue
 
-                # Convert images to numpy arrays
-                depth_image = np.asanyarray(depth_frame.get_data())
-                color_image = np.asanyarray(color_frame.get_data())
+    #             # Convert images to numpy arrays
+    #             depth_image = np.asanyarray(depth_frame.get_data())
+    #             color_image = np.asanyarray(color_frame.get_data())
 
-                processed_image = self.process_frame(color_image)
+    #             processed_image = self.process_frame(color_image)
                 
-                cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-                cv2.imshow('Pointing Gesture Detection', processed_image)
-                cv2.waitKey(1)
-                if cv2.waitKey(5) & 0xFF == 27:
-                    cv2.destroyAllWindows()
-                    break
-        finally:
+    #             cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
+    #             cv2.imshow('Pointing Gesture Detection', processed_image)
+    #             cv2.waitKey(1)
+    #             if cv2.waitKey(5) & 0xFF == 27:
+    #                 cv2.destroyAllWindows()
+    #                 break
+    #     finally:
 
-            # Stop streaming
-            pipeline.stop()
+    #         # Stop streaming
+    #         pipeline.stop()
 
     def run_video(self, video_path):
         """Runs the gesture detection on a local video file"""

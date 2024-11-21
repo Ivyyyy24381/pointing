@@ -18,6 +18,60 @@ from gesture_util import *
 import cv2
 import numpy as np
 
+camera_intrinsics = {
+    "fx": 607.5303,  # Focal length in x (pixels)
+    "fy": 607.0724,  # Focal length in y (pixels)
+    "cx": 320.0,     # Principal point x (pixels) (image width / 2 for 640x480)
+    "cy": 240.0      # Principal point y (pixels) (image height / 2 for 640x480)
+}
+
+
+def camera_to_human_local(point_camera, pose_landmarks):
+    # Assume landmarks include hip_center, left_hip, right_hip, and up_direction points
+    hip_center = np.array([pose_landmarks["hip_center"].x,
+                           pose_landmarks["hip_center"].y,
+                           pose_landmarks["hip_center"].z])  # Camera frame
+                           
+    left_hip = np.array([pose_landmarks["left_hip"].x,
+                         pose_landmarks["left_hip"].y,
+                         pose_landmarks["left_hip"].z])
+                         
+    right_hip = np.array([pose_landmarks["right_hip"].x,
+                          pose_landmarks["right_hip"].y,
+                          pose_landmarks["right_hip"].z])
+                          
+    # Compute local frame axes
+    x_axis = (right_hip - left_hip) / np.linalg.norm(right_hip - left_hip)
+    z_axis = np.cross(x_axis, np.array([0, 1, 0]))  # Assume "up" is Y-axis
+    z_axis /= np.linalg.norm(z_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    
+    # Transformation matrix (rotation + translation)
+    rotation_matrix = np.stack([x_axis, y_axis, z_axis], axis=1)  # 3x3
+    translation_vector = -hip_center  # Translation to make hip center origin
+    
+    # Apply transformation
+    point_human_local = rotation_matrix.T @ (point_camera - hip_center)
+    return point_human_local
+
+def pixel_to_camera_frame(u, v, depth, intrinsics):
+    """
+    Converts a 2D pixel coordinate (u, v) and depth to a 3D camera coordinate.
+    
+    Parameters:
+        u, v (float): Pixel coordinates in the image frame.
+        depth (float): Depth value at the pixel (in meters).
+        intrinsics (dict): Camera intrinsics with fx, fy, cx, cy.
+        
+    Returns:
+        np.array: 3D point in the camera frame (x, y, z).
+    """
+    fx, fy, cx, cy = intrinsics["fx"], intrinsics["fy"], intrinsics["cx"], intrinsics["cy"]
+    x = (u - cx) * depth / fx
+    y = (v - cy) * depth / fy
+    z = depth
+    return np.array([x, y, z])  # 3D point in the camera frame
+    
 def match_fov(image, hfov_wide=87, hfov_narrow=69, vfov_wide=58, vfov_narrow=42):
     h_crop_ratio = np.tan(np.deg2rad(hfov_narrow / 2)) / np.tan(np.deg2rad(hfov_wide / 2))
     v_crop_ratio = np.tan(np.deg2rad(vfov_narrow / 2)) / np.tan(np.deg2rad(vfov_wide / 2))
@@ -32,6 +86,14 @@ def match_fov(image, hfov_wide=87, hfov_narrow=69, vfov_wide=58, vfov_narrow=42)
     return cropped_image
 
 class VideoPlayerGUI:
+    __ELBOW_WRIST_COLOR = (13, 204, 255)
+    __SHOULDER_WRIST_COLOR = (38, 115, 255)
+    __EYE_WRIST_COLOR = (113, 242, 189)
+    __NOSE_WRIST_COLOR = (105, 38, 191)
+    __WRIST_INDEX_COLOR = (255, 98, 41)
+
+    __INDEX_COLOR = (255, 234, 14)
+    __GAZE_COLOR = (122, 110, 84)
     def __init__(self, root):
         self.root = root
         self.root.title("Video Player with 3D Skeleton Visualization and Temporal Data")
@@ -70,7 +132,17 @@ class VideoPlayerGUI:
 
         self.stop_button = tk.Button(root, text="Stop", command=self.stop_video)
         self.stop_button.pack()
-
+        
+        # Checkbox for gesture evaluation
+        self.evaluate_gesture_var = tk.BooleanVar(value=False)
+        self.evaluate_gesture_checkbox = tk.Checkbutton(
+            root,
+            text="Evaluate Gestures",
+            variable=self.evaluate_gesture_var,
+            command=self.toggle_gesture_evaluation
+        )
+        self.evaluate_gesture_checkbox.pack()
+        
         # Add target management buttons
         self.add_target_button = tk.Button(root, text="Add Target", command=self.add_target)
         self.add_target_button.pack()
@@ -105,6 +177,13 @@ class VideoPlayerGUI:
         self.slider.config(to=self.frame_count - 1)
         self.display_frame(0)
 
+    def toggle_gesture_evaluation(self):
+        """Callback for toggling gesture evaluation."""
+        if self.evaluate_gesture_var.get():
+            print("Gesture evaluation enabled.")
+        else:
+            print("Gesture evaluation disabled.")
+            
     def display_frame(self, frame_idx):
         if not self.cap:
             return
@@ -124,31 +203,33 @@ class VideoPlayerGUI:
             # draw landmark on depth image (do not delete)
             mp.solutions.drawing_utils.draw_landmarks(depth_orig, pose_results.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
             landmarks_2d = pose_results.pose_landmarks
-            if self.gesture_detector.pointing_hand_handedness != "":
-                vectors_2d = self.gesture_detector.find_vectors(self.gesture_detector.pointing_hand_handedness, landmarks_2d)
-                joints_2d = self.gesture_detector.find_joint_locations(self.gesture_detector.pointing_hand_handedness, landmarks_2d)
-                self.gesture_detector.display_visualization(depth_orig, joints_2d, vectors_2d)
+            if self.evaluate_gesture_var.get():  # Check if gesture evaluation is enabled
+                
+                if self.gesture_detector.pointing_hand_handedness != "":
+                    vectors_2d = self.gesture_detector.find_vectors(self.gesture_detector.pointing_hand_handedness, landmarks_2d)
+                    joints_2d = self.gesture_detector.find_joint_locations(self.gesture_detector.pointing_hand_handedness, landmarks_2d)
+                    self.gesture_detector.display_visualization(depth_orig, joints_2d, vectors_2d)
 
-            if pose_results.pose_landmarks:
-                landmarks = np.array([[lm.x, lm.y, lm.z] for lm in pose_results.pose_world_landmarks.landmark])
-                vectors = self.gesture_detector.find_vectors(self.gesture_detector.pointing_hand_handedness, pose_results.pose_world_landmarks)
-                joints = self.gesture_detector.find_joint_locations(self.gesture_detector.pointing_hand_handedness, pose_results.pose_world_landmarks)
-                wrist_location = joints['wrist']
+                if pose_results.pose_landmarks:
+                    landmarks = np.array([[lm.x, lm.y, lm.z] for lm in pose_results.pose_world_landmarks.landmark])
+                    vectors = self.gesture_detector.find_vectors(self.gesture_detector.pointing_hand_handedness, pose_results.pose_world_landmarks)
+                    joints = self.gesture_detector.find_joint_locations(self.gesture_detector.pointing_hand_handedness, pose_results.pose_world_landmarks)
+                    wrist_location = joints['wrist']
 
-                # Add wrist position to history
-                self.wrist_history.append([wrist_location.x, wrist_location.y, wrist_location.z])
+                    # Add wrist position to history
+                    self.wrist_history.append([wrist_location.x, wrist_location.y, wrist_location.z])
 
-                # Store temporal data for shoulder, wrist, elbow, and nose
-                self.update_temporal_data(frame_idx, joints)
+                    # Store temporal data for shoulder, wrist, elbow, and nose
+                    self.update_temporal_data(frame_idx, joints)
 
-                # Evaluate pointing gestures in real-time
-                eval_result = self.evaluate_gestures_live(self.ground_plane, wrist_location, vectors)
+                    # Evaluate pointing gestures in real-time
+                    eval_result = self.evaluate_gestures_live(self.ground_plane, wrist_location, vectors)
 
-                # Update the 3D skeleton plot
-                self.update_skeleton_3d(pose_results.pose_world_landmarks, eval_result['vector_intersections'], eval_result['closest_target'])
+                    # Update the 3D skeleton plot
+                    self.update_skeleton_3d(pose_results.pose_world_landmarks, eval_result['vector_intersections'], eval_result['closest_target'])
 
-                # Update temporal data plots
-                self.update_temporal_plots(frame_idx)
+                    # Update temporal data plots
+                    self.update_temporal_plots(frame_idx)
 
             color_frame = self.downscale_frame(color_orig, self.downscale_factor)
             depth_frame = self.downscale_frame(depth_orig, self.downscale_factor)
@@ -263,8 +344,22 @@ class VideoPlayerGUI:
 
         # Plot vector-ground intersections
         for name, intersection in vector_intersections.items():
-            self.ax.scatter(intersection[0], intersection[1], intersection[2], marker='o', label=f'{name} intersection')
-            self.ax.plot([x[i], intersection[0]], [y[i], intersection[1]], [z[i], intersection[2]], color='yellow', linestyle='-')
+            if "eye" in name:    
+                c1 = self.__EYE_WRIST_COLOR
+            elif "elbow" in name:
+                c1 = self.__ELBOW_WRIST_COLOR
+            elif "nose" in name:
+                c1 = self.__NOSE_WRIST_COLOR
+            elif "shoulder" in name:
+                c1 = self.__SHOULDER_WRIST_COLOR
+            else:
+                c1 = self.__GAZE_COLOR
+            if "index" in name:
+                c2 = 'grey'
+            else:
+                c2 = 'orange'
+            self.ax.scatter(intersection[0], intersection[1], intersection[2], marker='o', c = [np.array(c1)/255], label=f'{name} intersection')
+            self.ax.plot([x[i], intersection[0]], [y[i], intersection[1]], [z[i], intersection[2]], color=c2, linestyle='-')
 
         # Plot pointing vectors and targets
         for target in self.target_locations:
@@ -318,7 +413,7 @@ class VideoPlayerGUI:
         self.ax_temporal[0].set_ylabel("X Axis[m]")
         self.ax_temporal[1].set_ylabel("Y Axis[m]")
         self.ax_temporal[2].set_ylabel("Z Axis[m]")
-        self.ax_temporal[2].set_title("joint location[m]")
+        self.ax_temporal[0].set_title("joint location[m]")
 
         self.canvas_temporal.draw()
 

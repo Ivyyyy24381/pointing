@@ -7,12 +7,19 @@ from tkinter import filedialog, messagebox, ttk
 import os
 import threading
 from queue import Queue, Empty
+from collections import deque
 
 sys.path.append('code/')
 from bag_to_video import run_rs_convert, run_ffmpeg_convert, concat_videos
 from batch_split_bag import generate_and_run_commands
 
-
+# Add smoothing using a deque
+def moving_average(signal, window_size=10):
+    window = deque(maxlen=window_size)
+    for val in signal:
+        window.append(val)
+        yield sum(window) / len(window)
+        
 class RedirectOutput:
     """Class to redirect stdout and stderr to a tkinter Text widget."""
     def __init__(self, text_widget, queue):

@@ -17,3 +17,4 @@ data/test/.DS_Store
 visualize/__pycache__/gesture_detection.cpython-312.pyc
 code/__pycache__/bag_to_video.cpython-312.pyc
 code/__pycache__/batch_split_bag.cpython-312.pyc
+.DS_Store
