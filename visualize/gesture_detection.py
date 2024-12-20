@@ -41,7 +41,8 @@ class PointingGestureDetector:
         # Data storage (using pandas DataFrame)
         self.data = pd.DataFrame(columns=[
             'frame', 'gesture_duration', 'pointing_count', 'pointing_arm',
-            'eye_to_wrist', 'shoulder_to_wrist', 'elbow_to_wrist', 'nose_to_wrist','wrist_to_index',
+            'eye_to_wrist', 'shoulder_to_wrist', 'elbow_to_wrist', 'nose_to_wrist',
+            'wrist_to_index','eye_to_index','shoulder_to_index','elbow_to_index','nose_to_index',
             'wrist_location', 'landmarks', 'landmarks_3d'
         ])
 
@@ -108,6 +109,11 @@ class PointingGestureDetector:
                 'shoulder_to_wrist': [vectors['shoulder_to_wrist']],
                 'elbow_to_wrist': [vectors['elbow_to_wrist']],
                 'nose_to_wrist': [vectors['nose_to_wrist']],
+                'wrist_to_index':[vectors['wrist_to_index']],
+                'eye_to_index':[vectors['eye_to_index']],
+                'shoulder_to_index':[vectors['shoulder_to_index']],
+                'elbow_to_index':[vectors['elbow_to_index']],
+                'nose_to_index':[vectors['nose_to_index']],
                 'wrist_location': wrist_location, 
                 'landmarks': landmarks_2d,
                 'landmarks_3d': landmarks_3d
@@ -488,7 +494,7 @@ class PointingGestureDetector:
             # Flip image horizontally if necessary, else remove the flip
             # image = cv2.flip(image, 1)
             height, width, channels = image.shape
-            crop_img = image[0:height *3 //8, :]
+            crop_img = image[0:height * 4 //8, :]
             
             processed_image = self.process_frame(crop_img)
             cv2.imshow('Pointing Gesture Detection', processed_image)

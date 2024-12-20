@@ -6,12 +6,10 @@ from skspatial.plotting import plot_3d
 from scipy.spatial.transform import Rotation as R
 import ast
 # Add the path where pose_detection is located
-pose_detection_path = os.path.abspath('pose_detection/')  # Replace with the actual path
-if pose_detection_path not in sys.path:
-    sys.path.append(pose_detection_path)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     
 import argparse
-from gesture_util import *
+from visualize.gesture_util import *
 import pandas as pd
 import re
 
@@ -50,6 +48,21 @@ def to_vector(vec_str):
     except Exception as e:
         print(f"Error parsing vector {vec_str}: {e}")
         return None
+
+def calculate_distance(point1, point2):
+    """
+    Calculate the Euclidean distance between two 3D points.
+    """
+    return np.linalg.norm(np.array(point1) - np.array(point2))
+
+def calculate_angle(vec1, vec2):
+    """
+    Calculate the angle between two vectors in degrees.
+    """
+    dot_product = np.dot(vec1, vec2)
+    magnitude_product = np.linalg.norm(vec1) * np.linalg.norm(vec2)
+    cos_theta = np.clip(dot_product / magnitude_product, -1.0, 1.0)  # Avoid numerical instability
+    return np.degrees(np.arccos(cos_theta))
 
 def parse_landmarks(landmark_str):
     # Find all the blocks of 'landmark {...}' and extract the x, y, z, and visibility values
@@ -204,8 +217,28 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
             'eye_to_wrist': to_vector(row['eye_to_wrist'].values[0]),
             'shoulder_to_wrist': to_vector(row['shoulder_to_wrist'].values[0]),
             'elbow_to_wrist': to_vector(row['elbow_to_wrist'].values[0]),
-            'nose_to_wrist': to_vector(row['nose_to_wrist'].values[0])
+            'nose_to_wrist': to_vector(row['nose_to_wrist'].values[0]),
+            
+            'eye_to_index': to_vector(row['eye_to_index'].values[0]),
+            'shoulder_to_index': to_vector(row['shoulder_to_index'].values[0]),
+            'elbow_to_index': to_vector(row['elbow_to_index'].values[0]),
+            'nose_to_index': to_vector(row['nose_to_index'].values[0]),
+            
+            
         }
+        # vectors = {
+        #     'eye_to_wrist': row['eye_to_wrist'].values[0],
+        #     'shoulder_to_wrist': row['shoulder_to_wrist'].values[0],
+        #     'elbow_to_wrist': row['elbow_to_wrist'].values[0],
+        #     'nose_to_wrist': row['nose_to_wrist'].values[0],
+            
+        #     'eye_to_index': row['eye_to_index'].values[0],
+        #     'shoulder_to_index': row['shoulder_to_index'].values[0],
+        #     'elbow_to_index': row['elbow_to_index'].values[0],
+        #     'nose_to_index': row['nose_to_index'].values[0],
+            
+            
+        # }
         # Step 3: Calculate the ground plane
         ground_plane = find_ground_plane(landmarks)
         ground_frame = np.array(ground_plane.normal)
@@ -259,14 +292,36 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
                     'shoulder_to_wrist':calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER], Landmark(*transformed_target_location, None)),
                     'elbow_to_wrist':calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_ELBOW], Landmark(*transformed_target_location, None)),
                     'nose_to_wrist':calculate_vector(landmarks[mp_pose.PoseLandmark.NOSE], Landmark(*transformed_target_location, None)),
+                    'eye_to_index': calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_EYE], Landmark(*transformed_target_location, None)),
+                    'shoulder_to_index':calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER], Landmark(*transformed_target_location, None)),
+                    'elbow_to_index':calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_ELBOW], Landmark(*transformed_target_location, None)),
+                    'nose_to_index':calculate_vector(landmarks[mp_pose.PoseLandmark.NOSE], Landmark(*transformed_target_location, None)),
+                    
                 }
+                shoulder_to_hip = calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER], landmarks[mp_pose.PoseLandmark.LEFT_HIP])
+                
+                wrist_to_index = calculate_vector(landmarks[mp_pose.PoseLandmark.LEFT_WRIST], landmarks[mp_pose.PoseLandmark.LEFT_INDEX])
             else:
                 ground_truth_vector = {
                     'eye_to_wrist': calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_EYE], Landmark(*transformed_target_location, None)),
                     'shoulder_to_wrist':calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER], Landmark(*transformed_target_location, None)),
                     'elbow_to_wrist':calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW], Landmark(*transformed_target_location, None)),
                     'nose_to_wrist':calculate_vector(landmarks[mp_pose.PoseLandmark.NOSE], Landmark(*transformed_target_location, None)),
+                    'eye_to_index': calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_EYE], Landmark(*transformed_target_location, None)),
+                    'shoulder_to_index':calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER], Landmark(*transformed_target_location, None)),
+                    'elbow_to_index':calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW], Landmark(*transformed_target_location, None)),
+                    'nose_to_index':calculate_vector(landmarks[mp_pose.PoseLandmark.NOSE], Landmark(*transformed_target_location, None)),
+                    
                 }
+                shoulder_to_hip =calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER], landmarks[mp_pose.PoseLandmark.RIGHT_HIP])
+                wrist_to_index = calculate_vector(landmarks[mp_pose.PoseLandmark.RIGHT_INDEX], landmarks[mp_pose.PoseLandmark.RIGHT_WRIST])
+                
+            shoulder_to_wrist_vector = np.array([vectors['shoulder_to_wrist'].x, vectors['shoulder_to_wrist'].y, vectors['shoulder_to_wrist'].z])
+            shoulder_to_hip_vector = np.array(shoulder_to_hip)
+            wrist_flex_angle = calculate_angle(shoulder_to_wrist_vector, wrist_to_index)
+            arm_raised_angle = calculate_angle(shoulder_to_wrist_vector, shoulder_to_hip_vector)
+            print("arm raised:", arm_raised_angle)
+            print("wrist flexed:", wrist_flex_angle)
             for name, vec in transformed_vectors.items():
                 # Step 5: Calculate the ground truth vector (target to wrist vector)
             
@@ -277,7 +332,7 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
                     line = Line(point = np.array([wrist_location.x, wrist_location.y, wrist_location.z]), direction =  vec)
                 else:
                     line = Line(point = np.array(wrist_location[0]), direction = np.array(vec))
-                plane_line_intersection = target_plane.intersect_line(line)
+                # plane_line_intersection = target_plane.intersect_line(line)
                 
                 try:
                     xy_plane_intersection = xy_plane.intersect_line(line)
@@ -311,10 +366,15 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
                     xz_plane_intersection = None
                     xz[name] = float('inf')
                     distances_xz[name] = None
-                    
+                
+
+                
                 vector_intersections_xy[name] = xy_plane_intersection
                 vector_intersections_yz[name] = yz_plane_intersection
                 vector_intersections_xz[name] = xz_plane_intersection
+                
+                
+                
                 # xz[name] = np.linalg.norm(xz_plane_intersection - transformed_target_location)
                 # xy[name] = np.linalg.norm(xy_plane_intersection - transformed_target_location)
                 # yz[name] = np.linalg.norm(yz_plane_intersection - transformed_target_location)
@@ -339,6 +399,44 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
                 angle = np.degrees(np.arccos(np.clip(cosine_similarity, -1.0, 1.0)))  # Convert to degrees
                 angles[name] = angle
             
+            pairs = [
+                    ('eye_to_wrist', 'eye_to_index'),
+                    ('shoulder_to_wrist', 'shoulder_to_index'),
+                    ('elbow_to_wrist', 'elbow_to_index'),
+                    ('nose_to_wrist', 'nose_to_index')
+                ]
+            
+            distance_diff = {}
+            angle_diff = {}
+            for pair in pairs:
+                vec1_name, vec2_name = pair
+                
+                # Get vectors for the pair
+                vec1 = transformed_vectors[vec1_name]
+                vec2 = transformed_vectors[vec2_name]
+
+                # Extend vectors to the ground plane
+                intersect_1 = ground_plane.intersect_line(
+        Line(point=[wrist_location.x, wrist_location.y, wrist_location.z], direction=[vec1.x, vec1.y, vec1.z])
+    )
+                intersect_2 = ground_plane.intersect_line(
+        Line(point=[wrist_location.x, wrist_location.y, wrist_location.z], direction=[vec2.x, vec2.y, vec2.z])
+    )
+                intersection_vec1 = intersect_1
+                intersection_vec2 = intersect_2
+                
+                # Compute distance difference on the ground plane
+                if intersection_vec1 is not None and intersection_vec2 is not None:
+                    distance_diff[vec1_name] = calculate_distance(intersection_vec1, intersection_vec2)
+                else:
+                    distance_diff[vec1_name] = float('inf')  # Handle parallel cases or missing intersections
+
+                # Compute angle between vectors
+                vec1_array = np.array([vec1.x, vec1.y, vec1.z])
+                vec2_array = np.array([vec2.x, vec2.y, vec2.z])
+                angle_diff[vec1_name] = calculate_angle(vec1_array, vec2_array)
+            print("angle ->", angle_diff)
+            print("dist ->",distance_diff)
             # Check if the shoulder-to-wrist vector provides the closest target
             if min(min(xz.values()), min(yz.values()), min(xy.values())) < min_distance:
                 min_distance = min(min(xz.values()), min(yz.values()), min(xy.values()))
@@ -354,6 +452,7 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
                 best_dist_xz = distances_xz
                 best_dist_yz = distances_yz
                 best_dist_xy = distances_xy
+            
 
         # Store results for the closest target
         results.append({
@@ -364,24 +463,47 @@ def evaluate_pointing_gestures(csv_path, video_path, target_locations, output_di
             'min_distance_to_target': min_distance, 
             'angle_to_target':min_angle,
             
+            'arm_raised_angle':arm_raised_angle,
+            'wrist_flex_angle':wrist_flex_angle,
+            'distance_diff_wrist_finger-eye': distance_diff['eye_to_wrist'], 
+            'angle_wrist_finger-eye': angle_diff['eye_to_wrist'],  
+            'distance_diff_wrist_finger-shoulder': distance_diff['shoulder_to_wrist'], 
+            'angle_wrist_finger-shoulder': angle_diff['shoulder_to_wrist'],  
+            'distance_diff_wrist_finger-eblow': distance_diff['elbow_to_wrist'], 
+            'angle_wrist_finger-elbow': angle_diff['elbow_to_wrist'],  
+            'distance_diff_wrist_finger-nose': distance_diff['nose_to_wrist'], 
+            'angle_wrist_finger-nose': angle_diff['nose_to_wrist'],  
+            
             'xz_distance_to_target(ground)': min(xz.values()),
             'yz_distance_to_target': min(yz.values()),
             'xy_distance_to_target': min(xy.values()),
             
             'distance_xz_eye_to_wrist': best_dist_xz['eye_to_wrist'],
+            'distance_xz_eye_to_index': best_dist_xz['eye_to_index'],
             'distance_xz_shoulder_to_wrist': best_dist_xz['shoulder_to_wrist'],
+            'distance_xz_shoulder_to_index': best_dist_xz['shoulder_to_index'],
             'distance_xz_elbow_to_wrist': best_dist_xz['elbow_to_wrist'],
+            'distance_xz_elbow_to_index': best_dist_xz['elbow_to_index'],
             'distance_xz_nose_to_wrist': best_dist_xz['nose_to_wrist'],
+            'distance_xz_nose_to_index': best_dist_xz['nose_to_index'],
             
             'distance_yz_eye_to_wrist': best_dist_yz['eye_to_wrist'],
+            'distance_yz_eye_to_index': best_dist_yz['eye_to_index'],
             'distance_yz_shoulder_to_wrist': best_dist_yz['shoulder_to_wrist'],
+            'distance_yz_shoulder_to_index': best_dist_yz['shoulder_to_index'],
             'distance_yz_elbow_to_wrist': best_dist_yz['elbow_to_wrist'],
+            'distance_yz_elbow_to_index': best_dist_yz['elbow_to_index'],
             'distance_yz_nose_to_wrist': best_dist_yz['nose_to_wrist'],
+            'distance_yz_nose_to_index': best_dist_yz['nose_to_index'],
             
             'distance_xy_eye_to_wrist': best_dist_xy['eye_to_wrist'],
+            'distance_xy_eye_to_index': best_dist_xy['eye_to_index'],
             'distance_xy_shoulder_to_wrist': best_dist_xy['shoulder_to_wrist'],
+            'distance_xy_shoulder_to_index': best_dist_xy['shoulder_to_index'],
             'distance_xy_elbow_to_wrist': best_dist_xy['elbow_to_wrist'],
+            'distance_xy_elbow_to_index': best_dist_xy['elbow_to_index'],
             'distance_xy_nose_to_wrist': best_dist_xy['nose_to_wrist'],
+            'distance_xy_nose_to_index': best_dist_xy['nose_to_index'],
             
             'angles_eye_to_wrist': best_angles['eye_to_wrist'],
             'angles_shoulder_to_wrist': best_angles['shoulder_to_wrist'],
