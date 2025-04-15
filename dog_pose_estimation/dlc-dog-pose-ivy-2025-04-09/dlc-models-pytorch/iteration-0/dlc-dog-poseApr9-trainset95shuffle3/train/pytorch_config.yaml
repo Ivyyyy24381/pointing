@@ -1,0 +1,212 @@
+data:
+  colormode: RGB
+  inference:
+    normalize_images: true
+    top_down_crop:
+      width: 256
+      height: 256
+    auto_padding:
+      pad_width_divisor: 32
+      pad_height_divisor: 32
+  train:
+    affine:
+      p: 0.5
+      rotation: 30
+      scaling:
+      - 1.0
+      - 1.0
+      translation: 0
+    collate:
+    covering: false
+    gaussian_noise: 12.75
+    hist_eq: false
+    motion_blur: false
+    normalize_images: true
+    top_down_crop:
+      width: 256
+      height: 256
+    auto_padding:
+      pad_width_divisor: 32
+      pad_height_divisor: 32
+detector:
+  data:
+    colormode: RGB
+    inference:
+      normalize_images: true
+    train:
+      affine:
+        p: 0.5
+        rotation: 30
+        scaling:
+        - 1.0
+        - 1.0
+        translation: 40
+      collate:
+        type: ResizeFromDataSizeCollate
+        min_scale: 0.4
+        max_scale: 1.0
+        min_short_side: 128
+        max_short_side: 1152
+        multiple_of: 32
+        to_square: false
+      hflip: true
+      normalize_images: true
+  device: auto
+  model:
+    type: FasterRCNN
+    freeze_bn_stats: true
+    freeze_bn_weights: false
+    variant: fasterrcnn_mobilenet_v3_large_fpn
+  runner:
+    type: DetectorTrainingRunner
+    key_metric: test.mAP@50:95
+    key_metric_asc: true
+    eval_interval: 10
+    optimizer:
+      type: AdamW
+      params:
+        lr: 0.0001
+    scheduler:
+      type: LRListScheduler
+      params:
+        milestones:
+        - 160
+        lr_list:
+        - - 1e-05
+    snapshots:
+      max_snapshots: 5
+      save_epochs: 25
+      save_optimizer_state: false
+  train_settings:
+    batch_size: 1
+    dataloader_workers: 0
+    dataloader_pin_memory: false
+    display_iters: 500
+    epochs: 250
+device: auto
+metadata:
+  project_path: 
+    /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09
+  pose_config_path: 
+    /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/dlc-models-pytorch/iteration-0/dlc-dog-poseApr9-trainset95shuffle3/train/pytorch_config.yaml
+  bodyparts:
+  - nose
+  - leftear
+  - rightear
+  - collar
+  - spine1
+  - spine2
+  - spine3
+  - tailstart
+  - tailend
+  - frontleftleg
+  - frontleftpaw
+  - frontrightleg
+  - frontrightpaw
+  - backleftleg
+  - backleftpaw
+  - backrightleg
+  - backrightpaw
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+  unique_bodyparts: []
+  individuals:
+  - animal
+  with_identity:
+method: td
+model:
+  backbone:
+    type: HRNet
+    model_name: hrnet_w32
+    freeze_bn_stats: true
+    freeze_bn_weights: false
+    interpolate_branches: false
+    increased_channel_count: false
+  backbone_output_channels: 32
+  heads:
+    bodypart:
+      type: HeatmapHead
+      weight_init: normal
+      predictor:
+        type: HeatmapPredictor
+        apply_sigmoid: false
+        clip_scores: true
+        location_refinement: true
+        locref_std: 7.2801
+      target_generator:
+        type: HeatmapGaussianGenerator
+        num_heatmaps: 17
+        pos_dist_thresh: 17
+        heatmap_mode: KEYPOINT
+        gradient_masking: true
+        background_weight: 0.0
+        generate_locref: true
+        locref_std: 7.2801
+      criterion:
+        heatmap:
+          type: WeightedMSECriterion
+          weight: 1.0
+        locref:
+          type: WeightedHuberCriterion
+          weight: 0.05
+      heatmap_config:
+        channels:
+        - 32
+        kernel_size: []
+        strides: []
+        final_conv:
+          out_channels: 17
+          kernel_size: 1
+      locref_config:
+        channels:
+        - 32
+        kernel_size: []
+        strides: []
+        final_conv:
+          out_channels: 34
+          kernel_size: 1
+net_type: hrnet_w32
+runner:
+  type: PoseTrainingRunner
+  gpus:
+  key_metric: test.mAP
+  key_metric_asc: true
+  eval_interval: 10
+  optimizer:
+    type: AdamW
+    params:
+      lr: 0.0001
+  scheduler:
+    type: LRListScheduler
+    params:
+      lr_list:
+      - - 1e-05
+      - - 1e-06
+      milestones:
+      - 160
+      - 190
+  snapshots:
+    max_snapshots: 5
+    save_epochs: 25
+    save_optimizer_state: false
+train_settings:
+  batch_size: 8
+  dataloader_workers: 0
+  dataloader_pin_memory: false
+  display_iters: 500
+  epochs: 200
+  seed: 42
+  weight_init:
+    dataset: superanimal_quadruped
+    snapshot_path: 
+      /home/xhe71/mambaforge/envs/DEEPLABCUT/lib/python3.10/site-packages/deeplabcut/modelzoo/checkpoints/superanimal_quadruped_hrnet_w32.pt
+    detector_snapshot_path: 
+      /home/xhe71/mambaforge/envs/DEEPLABCUT/lib/python3.10/site-packages/deeplabcut/modelzoo/checkpoints/superanimal_quadruped_fasterrcnn_mobilenet_v3_large_fpn.pt
+    with_decoder: false
+    memory_replay: false

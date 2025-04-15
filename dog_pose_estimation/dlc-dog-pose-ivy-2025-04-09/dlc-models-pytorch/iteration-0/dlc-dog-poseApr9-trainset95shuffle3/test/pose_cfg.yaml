@@ -1,0 +1,43 @@
+dataset: 
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09
+dataset_type: multi-animal-imgaug
+num_joints: 17
+all_joints:
+- - 0
+- - 1
+- - 2
+- - 3
+- - 4
+- - 5
+- - 6
+- - 7
+- - 8
+- - 9
+- - 10
+- - 11
+- - 12
+- - 13
+- - 14
+- - 15
+- - 16
+all_joints_names:
+- nose
+- leftear
+- rightear
+- collar
+- spine1
+- spine2
+- spine3
+- tailstart
+- tailend
+- frontleftleg
+- frontleftpaw
+- frontrightleg
+- frontrightpaw
+- backleftleg
+- backleftpaw
+- backrightleg
+- backrightpaw
+net_type: hrnet_w32
+global_scale: 1
+scoremap_dir: test

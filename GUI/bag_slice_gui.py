@@ -150,8 +150,8 @@ class RosbagSlicerGUI:
                 # Step 1: Generate full video
                 self.status_label.config(text="Generating full video for analysis...")
                 
-                color_video_path = f"{output_folder}/Color.mp4"
-                depth_video_path = f"{output_folder}/Depth.mp4"
+                color_video_path = os.path.join(output_folder, 'Color.mp4')
+                depth_video_path = os.path.join(output_folder, 'Depth.mp4')
 
                 # Step 2: Analyze videos for split points
                 self.status_label.config(text="Analyzing video for split points...")
@@ -286,8 +286,8 @@ class RosbagSlicerGUI:
 
                 self.status_label.config(text="Concatenating videos...")
                 self.progress_bar['value'] = 90
-                color_video_path = f"{output_folder}/Color.mp4"
-                depth_video_path = f"{output_folder}/Depth.mp4"
+                color_video_path = os.path.join(output_folder, 'Color.mp4') 
+                depth_video_path = os.path.join(output_folder, 'Depth.mp4') 
                 concat_videos(color_video_path, depth_video_path, os.path.join(output_folder, "output.mp4"))
 
                 self.progress_bar['value'] = 100
@@ -312,8 +312,8 @@ class RosbagSlicerGUI:
                     out_path = f"{output_folder}/{index}/"
                     run_rs_convert(rosbag_path, out_path, start_time, end_time)
                     run_ffmpeg_convert(out_path)
-                    color_video_path = f"{out_path}/Color.mp4"
-                    depth_video_path = f"{out_path}/Depth.mp4"
+                    color_video_path = os.path.join(out_path, "Color.mp4")
+                    depth_video_path = os.path.join(out_path, "Depth.mp4")
                     concat_videos(color_video_path, depth_video_path, os.path.join(out_path, "output.mp4"))
 
                     self.progress_bar['value'] += 1

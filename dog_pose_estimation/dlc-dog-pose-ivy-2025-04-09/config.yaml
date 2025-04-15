@@ -1,0 +1,122 @@
+# Project definitions (do not edit)
+Task: dlc-dog-pose
+scorer: ivy
+date: Apr9
+multianimalproject: false
+identity:
+
+
+# Project path (change when moving around)
+project_path: 
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09
+
+
+# Default DeepLabCut engine to use for shuffle creation (either pytorch or tensorflow)
+engine: pytorch
+
+
+# Annotation data set configuration (and individual video cropping parameters)
+video_sets:
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/videos/coco_train01.mov:
+    crop: 0, 640, 0, 360
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/videos/coco_train02.mov:
+    crop: 0, 640, 0, 360
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/videos/coco_train03.mov:
+    crop: 0, 640, 0, 360
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/videos/coco_train04.mov:
+    crop: 0, 640, 0, 360
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/videos/coco_train05.mov:
+    crop: 0, 640, 0, 360
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/dlc-dog-pose-ivy-2025-04-09/videos/coco_train06.mov:
+    crop: 0, 640, 0, 360
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/train/Color_2.mp4:
+    crop: 0, 1280, 0, 720
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/train/Color_3.mp4:
+    crop: 0, 1280, 0, 720
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/train/Color_4.mp4:
+    crop: 0, 1280, 0, 720
+  /home/xhe71/Documents/GitHub/pointing/dog_pose_estimation/train/Color.mp4:
+    crop: 0, 1280, 0, 720
+bodyparts:
+- nose
+- leftear
+- rightear
+- collar
+- spine1
+- spine2
+- spine3
+- tailstart
+- tailend
+- frontleftleg
+- frontleftpaw
+- frontrightleg
+- frontrightpaw
+- backleftleg
+- backleftpaw
+- backrightleg
+- backrightpaw
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+start: 0
+stop: 1
+numframes2pick: 20
+
+
+# Plotting configuration
+skeleton:
+- - nose
+  - leftear
+- - nose
+  - rightear
+- - spine1
+  - spine2
+- - spine2
+  - spine3
+- - spine3
+  - tailstart
+- - tailstart
+  - tailend
+
+skeleton_color: black
+pcutoff: 0.6
+dotsize: 12
+alphavalue: 0.7
+colormap: rainbow
+
+
+# Training,Evaluation and Analysis configuration
+TrainingFraction:
+- 0.95
+iteration: 0
+default_net_type: resnet_50
+default_augmenter: default
+snapshotindex: -1
+detector_snapshotindex: -1
+batch_size: 8
+detector_batch_size: 1
+
+
+# Cropping Parameters (for analysis and outlier frame detection)
+cropping: true
+#if cropping is true for analysis, then set the values here:
+x1: 0
+x2: 640
+y1: 0
+y2: 360
+
+
+# Refinement configuration (parameters from annotation dataset configuration also relevant in this stage)
+corner2move2:
+- 50
+- 50
+move2corner: true
+
+
+# Conversion tables to fine-tune SuperAnimal weights
+SuperAnimalConversionTables:
