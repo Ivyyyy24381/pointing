@@ -11,17 +11,53 @@ from mediapipe.framework.formats.landmark_pb2 import Landmark
 import json
 from gesture_util import *
 import copy
+import pyrealsense2 as rs
+# === Helper function: cartesian_to_spherical ===
+def cartesian_to_spherical(vector):
+    x, y, z = vector
+    r = np.linalg.norm(vector)
+    theta = np.arctan2(y, x)  # azimuth
+    phi = np.arccos(z / r) if r != 0 else 0  # elevation
+    return theta, phi
 
 # fx = 3629.5913404959015
 # fy = 3629.5913404959015
 # px = 2104.0
 # py = 1560.0
 
-px = 320
-py = 240
-fx = 552.0291012161067
-fy = 552.0291012161067
 
+def find_realsense_intrinsics(bag_path):
+    # === Load the bag file ===
+    cfg = rs.config()
+    cfg.enable_device_from_file(bag_path)
+
+    pipeline = rs.pipeline()
+    profile = pipeline.start(cfg)
+
+    # === Wait for frames to arrive ===
+    frames = pipeline.wait_for_frames()
+    color_frame = frames.get_color_frame()
+
+    # === Get stream profile ===
+    color_stream = profile.get_stream(rs.stream.color)
+    video_profile = color_stream.as_video_stream_profile()
+
+    # === Extract intrinsics ===
+    intr = video_profile.get_intrinsics()
+
+    print("Width:", intr.width)
+    print("Height:", intr.height)
+    print("PPX (cx):", intr.ppx)
+    print("PPY (cy):", intr.ppy)
+    print("FX:", intr.fx)
+    print("FY:", intr.fy)
+    print("Distortion Model:", intr.model)
+    print("Coefficients:", intr.coeffs)
+
+    # === Stop the pipeline ===
+    pipeline.stop()
+
+    return intr
 
 
 class PointingGestureDetector:
@@ -102,109 +138,324 @@ class PointingGestureDetector:
     
 
 
-    def update_optimal_vector(self, image, depth_image = None, transformation_matrix = None):
+    def update_optimal_vector(self, image, depth_image=None, transformation_matrix=None):
         """
-        export the optimal vector and its confidnence to json
+        Export the optimal vector and its confidence to JSON, and calculate distance to predefined targets.
         """
         self.best_frame_color = copy.deepcopy(image)
         self.best_frame_depth = copy.deepcopy(depth_image)
         self.best_frame_transformation = transformation_matrix
 
-        # find angle between two vectors to determine how align are the vectors
+        # Define wrist and gaze_to_wrist before using them
+        wrist = self.joints["wrist"]
+        gaze_to_wrist = self.vectors["gaze"]
+
         shoulder_to_wrist = self.vectors['shoulder_to_wrist']
         elbow_to_wrist = self.vectors['elbow_to_wrist']
         nose_to_wrist = self.vectors['nose_to_wrist']
         eye_to_wrist = self.vectors['eye_to_wrist']
-        angle_list = [angle_between(shoulder_to_wrist, elbow_to_wrist), 
-                      angle_between(shoulder_to_wrist, nose_to_wrist), 
-                      angle_between(shoulder_to_wrist, eye_to_wrist)]
-        angle = max(angle_list)
+
+        t1, t2, t3, t4 = [
+            np.array([-0.877, 0.889, 2.708]),
+            np.array([-0.183, 0.763, 2.879]),
+            np.array([0.595, 0.709, 2.828]),
+            np.array([1.257, 0.817, 2.652])
+        ]
+
+        angle_t1_list = [
+            self.angle_to_target(wrist, eye_to_wrist, t1),
+            self.angle_to_target(wrist, shoulder_to_wrist, t1),
+            self.angle_to_target(wrist, elbow_to_wrist, t1),
+            self.angle_to_target(wrist, nose_to_wrist, t1),
+            self.angle_to_target(wrist, gaze_to_wrist, t1),
+        ]
+        angle_eye_to_wrist_t1 = angle_t1_list[0]
+        angle_shoulder_to_wrist_t1 = angle_t1_list[1]
+        angle_elbow_to_wrist_t1 = angle_t1_list[2]
+        angle_nose_to_wrist_t1 = angle_t1_list[3]
+        angle_gaze_t1 = angle_t1_list[4]
+
+        angle_t2_list = [
+            self.angle_to_target(wrist, eye_to_wrist, t2),
+            self.angle_to_target(wrist, shoulder_to_wrist, t2),
+            self.angle_to_target(wrist, elbow_to_wrist, t2),
+            self.angle_to_target(wrist, nose_to_wrist, t2),
+            self.angle_to_target(wrist, gaze_to_wrist, t2),
+        ]
+        angle_eye_to_wrist_t2 = angle_t2_list[0]
+        angle_shoulder_to_wrist_t2 = angle_t2_list[1]
+        angle_elbow_to_wrist_t2 = angle_t2_list[2]
+        angle_nose_to_wrist_t2 = angle_t2_list[3]
+        angle_gaze_t2 = angle_t2_list[4]
+
+        angle_t3_list = [
+            self.angle_to_target(wrist, eye_to_wrist, t3),
+            self.angle_to_target(wrist, shoulder_to_wrist, t3),
+            self.angle_to_target(wrist, elbow_to_wrist, t3),
+            self.angle_to_target(wrist, nose_to_wrist, t3),
+            self.angle_to_target(wrist, gaze_to_wrist, t3),
+        ]
+        angle_eye_to_wrist_t3 = angle_t3_list[0]
+        angle_shoulder_to_wrist_t3 = angle_t3_list[1]
+        angle_elbow_to_wrist_t3 = angle_t3_list[2]
+        angle_nose_to_wrist_t3 = angle_t3_list[3]
+        angle_gaze_t3 = angle_t3_list[4]
+
+        angle_t4_list = [
+            self.angle_to_target(wrist, eye_to_wrist, t4),
+            self.angle_to_target(wrist, shoulder_to_wrist, t4),
+            self.angle_to_target(wrist, elbow_to_wrist, t4),
+            self.angle_to_target(wrist, nose_to_wrist, t4),
+            self.angle_to_target(wrist, gaze_to_wrist, t4),
+        ]
+        angle_eye_to_wrist_t4 = angle_t4_list[0]
+        angle_shoulder_to_wrist_t4 = angle_t4_list[1]
+        angle_elbow_to_wrist_t4 = angle_t4_list[2]
+        angle_nose_to_wrist_t4 = angle_t4_list[3]
+        angle_gaze_t4 = angle_t4_list[4]
+
         origin = None
         if self.origin:
             origin = [self.origin.x, self.origin.y, self.origin.z]
-        # TODO:
+
+        # Use angle_shoulder_to_wrist_t1 as opening angle for legacy
+        angle = angle_shoulder_to_wrist_t1
+
+        # Compute spherical angles for each vector to each target
         vector_data = {
-            'pointing_arm':self.pointing_hand_handedness,
+            'pointing_arm': self.pointing_hand_handedness,
             'pointing_vector_origin': origin,
             'pointing_vector_dir': (shoulder_to_wrist).tolist(),
             'pointing_classification_confidence': self.pointing_confidence,
-            'pointing_vector_conf':self.gesture_conf,
+            'pointing_vector_conf': self.gesture_conf,
             'pointing_vector_opening_angle': np.rad2deg(angle),
-
+            # Store extracted angles for each vector and target
+            'angle_eye_to_wrist_t1': angle_eye_to_wrist_t1,
+            'angle_shoulder_to_wrist_t1': angle_shoulder_to_wrist_t1,
+            'angle_elbow_to_wrist_t1': angle_elbow_to_wrist_t1,
+            'angle_nose_to_wrist_t1': angle_nose_to_wrist_t1,
+            'angle_gaze_t1': angle_gaze_t1,
+            'angle_eye_to_wrist_t2': angle_eye_to_wrist_t2,
+            'angle_shoulder_to_wrist_t2': angle_shoulder_to_wrist_t2,
+            'angle_elbow_to_wrist_t2': angle_elbow_to_wrist_t2,
+            'angle_nose_to_wrist_t2': angle_nose_to_wrist_t2,
+            'angle_gaze_t2': angle_gaze_t2,
+            'angle_eye_to_wrist_t3': angle_eye_to_wrist_t3,
+            'angle_shoulder_to_wrist_t3': angle_shoulder_to_wrist_t3,
+            'angle_elbow_to_wrist_t3': angle_elbow_to_wrist_t3,
+            'angle_nose_to_wrist_t3': angle_nose_to_wrist_t3,
+            'angle_gaze_t3': angle_gaze_t3,
+            'angle_eye_to_wrist_t4': angle_eye_to_wrist_t4,
+            'angle_shoulder_to_wrist_t4': angle_shoulder_to_wrist_t4,
+            'angle_elbow_to_wrist_t4': angle_elbow_to_wrist_t4,
+            'angle_nose_to_wrist_t4': angle_nose_to_wrist_t4,
+            'angle_gaze_t4': angle_gaze_t4,
         }
+
+        # Calculate spherical angles for each vector to each target
+        vector_types = [
+            ("eye_to_wrist", eye_to_wrist),
+            ("shoulder_to_wrist", shoulder_to_wrist),
+            ("elbow_to_wrist", elbow_to_wrist),
+            ("nose_to_wrist", nose_to_wrist),
+            ("gaze_to_wrist", gaze_to_wrist),
+        ]
+        targets = [("t1", t1), ("t2", t2), ("t3", t3), ("t4", t4)]
+        for vname, vvec in vector_types:
+            for tname, tvec in targets:
+                target_vector = tvec - wrist
+                theta, phi = cartesian_to_spherical(target_vector)
+                vector_data[f"theta_{vname}_{tname}"] = theta
+                vector_data[f"phi_{vname}_{tname}"] = phi
+
+        # === Gaze-to-Target Distance Calculation ===
+        if origin is not None and shoulder_to_wrist is not None:
+            origin_np = np.array(origin)
+            direction = np.array(shoulder_to_wrist)
+            direction = direction / np.linalg.norm(direction)
+
+            self.targets_3d = [
+                np.array([-0.877, 0.889, 2.708]),
+                np.array([-0.183, 0.763, 2.879]),
+                np.array([0.595, 0.709, 2.828]),
+                np.array([1.257, 0.817, 2.652])
+            ]
+
+            distances = []
+            for i, target in enumerate(self.targets_3d):
+                to_target = target - origin_np
+                projection_length = np.dot(to_target, direction)
+                projected_point = origin_np + projection_length * direction
+                distance = np.linalg.norm(projected_point - target)
+                distances.append((i + 1, distance, target.tolist()))
+
+            vector_data['target_distances'] = [{
+                'target_id': tid,
+                'distance': float(np.round(dist, 3)),
+                'target_position': pos
+            } for tid, dist, pos in distances]
+
+            print("Distances to targets:", vector_data['target_distances'])
+
         self.best_3d_cone = vector_data
-        print(vector_data)
-        # Save vector data & images
+
+        # Save output
         write_json_locked(vector_data, ".tmp/gesture_vector.json")
         cv2.imwrite(".tmp/gesture_color.png", self.best_frame_color)
         if depth_image is not None:
             cv2.imwrite(".tmp/gesture_depth.png", self.best_frame_depth)
         if transformation_matrix is not None:
             write_json_locked(self.best_frame_transformation, ".tmp/gesture_transformation.json")
+
         print("----SAVING GESTURE IMAGES -------")
         print("updating vector output, opening angle is", np.rad2deg(angle))
         print("----waiting for new gesture-----")
-        
-        origin, direction, cone_angle = map_to_3d()
-        print(f"3d cone of angle {cone_angle}: origin at{origin} with direction {direction}")
+
 
     def save_gesture_data(self, frame_num, gesture_duration, pointing_arm, vectors, vectors_conf, wrist_location, landmarks_2d, landmarks_3d):
         """
         Save the detected pointing gesture data into the dataframe.
-        
         Args:
             gesture_duration: Duration of the gesture.
             pointing_arm: The arm used for pointing (left or right).
             vectors: A dictionary of pointing vectors.
             wrist_location: The 3D location of the wrist.
         """
+        import time
         # Add a new row to the dataframe with all the relevant data
-        if vectors is not None:
+        if vectors is not None and vectors_conf is not None:
+            # Compute all 16 angles for the 4 targets and 4 vectors
+            t1 = np.array([-0.877, 0.889, 2.708])
+            t2 = np.array([-0.183, 0.763, 2.879])
+            t3 = np.array([0.595, 0.709, 2.828])
+            t4 = np.array([1.257, 0.817, 2.652])
+            # Compute angles for each vector and target
+            angle_eye_to_wrist_t1 = self.angle_to_target(wrist_location, vectors["eye_to_wrist"], t1)
+            angle_shoulder_to_wrist_t1 = self.angle_to_target(wrist_location, vectors["shoulder_to_wrist"], t1)
+            angle_elbow_to_wrist_t1 = self.angle_to_target(wrist_location, vectors["elbow_to_wrist"], t1)
+            angle_nose_to_wrist_t1 = self.angle_to_target(wrist_location, vectors["nose_to_wrist"], t1)
+            angle_gaze_t1 = self.angle_to_target(wrist_location, vectors["gaze"], t1)
+
+            angle_eye_to_wrist_t2 = self.angle_to_target(wrist_location, vectors["eye_to_wrist"], t2)
+            angle_shoulder_to_wrist_t2 = self.angle_to_target(wrist_location, vectors["shoulder_to_wrist"], t2)
+            angle_elbow_to_wrist_t2 = self.angle_to_target(wrist_location, vectors["elbow_to_wrist"], t2)
+            angle_nose_to_wrist_t2 = self.angle_to_target(wrist_location, vectors["nose_to_wrist"], t2)
+            angle_gaze_t2 = self.angle_to_target(wrist_location, vectors["gaze"], t2)
+
+            angle_eye_to_wrist_t3 = self.angle_to_target(wrist_location, vectors["eye_to_wrist"], t3)
+            angle_shoulder_to_wrist_t3 = self.angle_to_target(wrist_location, vectors["shoulder_to_wrist"], t3)
+            angle_elbow_to_wrist_t3 = self.angle_to_target(wrist_location, vectors["elbow_to_wrist"], t3)
+            angle_nose_to_wrist_t3 = self.angle_to_target(wrist_location, vectors["nose_to_wrist"], t3)
+            angle_gaze_t3 = self.angle_to_target(wrist_location, vectors["gaze"], t3)
+
+            angle_eye_to_wrist_t4 = self.angle_to_target(wrist_location, vectors["eye_to_wrist"], t4)
+            angle_shoulder_to_wrist_t4 = self.angle_to_target(wrist_location, vectors["shoulder_to_wrist"], t4)
+            angle_elbow_to_wrist_t4 = self.angle_to_target(wrist_location, vectors["elbow_to_wrist"], t4)
+            angle_nose_to_wrist_t4 = self.angle_to_target(wrist_location, vectors["nose_to_wrist"], t4)
+            angle_gaze_t4 = self.angle_to_target(wrist_location, vectors["gaze"], t4)
+
+            # Compute spherical (theta, phi) for each type and target
+            vector_types = [
+                ("eye_to_wrist", vectors["eye_to_wrist"]),
+                ("shoulder_to_wrist", vectors["shoulder_to_wrist"]),
+                ("elbow_to_wrist", vectors["elbow_to_wrist"]),
+                ("nose_to_wrist", vectors["nose_to_wrist"]),
+                ("gaze_to_wrist", vectors["gaze"]),
+            ]
+            targets = [("t1", t1), ("t2", t2), ("t3", t3), ("t4", t4)]
+            sph_dict = {}
+            for vname, vvec in vector_types:
+                for tname, tvec in targets:
+                    wrist_array = np.array([wrist_location.x, wrist_location.y, wrist_location.z])
+                    target_vector = tvec - wrist_array
+                    theta, phi = cartesian_to_spherical(target_vector)
+                    sph_dict[f"theta_{vname}_{tname}"] = [theta]
+                    sph_dict[f"phi_{vname}_{tname}"] = [phi]
+
             new_row = {
                 'frame': frame_num,
+                'time': time.time(),
                 'gesture_duration': gesture_duration,
-                'pointing_confidence':self.pointing_confidence,
+                'pointing_confidence': self.pointing_confidence,
                 'pointing_arm': pointing_arm,
                 'eye_to_wrist': [vectors['eye_to_wrist']],
                 'eye_to_wrist_conf': [vectors_conf['eye_to_wrist']],
+                'angle_eye_to_wrist_t1': [angle_eye_to_wrist_t1],
+                'angle_eye_to_wrist_t2': [angle_eye_to_wrist_t2],
+                'angle_eye_to_wrist_t3': [angle_eye_to_wrist_t3],
+                'angle_eye_to_wrist_t4': [angle_eye_to_wrist_t4],
                 'shoulder_to_wrist': [vectors['shoulder_to_wrist']],
                 'shoulder_to_wrist_conf': [vectors_conf['shoulder_to_wrist']],
+                'angle_shoulder_to_wrist_t1': [angle_shoulder_to_wrist_t1],
+                'angle_shoulder_to_wrist_t2': [angle_shoulder_to_wrist_t2],
+                'angle_shoulder_to_wrist_t3': [angle_shoulder_to_wrist_t3],
+                'angle_shoulder_to_wrist_t4': [angle_shoulder_to_wrist_t4],
                 'elbow_to_wrist': [vectors['elbow_to_wrist']],
                 'elbow_to_wrist_conf': [vectors_conf['elbow_to_wrist']],
+                'angle_elbow_to_wrist_t1': [angle_elbow_to_wrist_t1],
+                'angle_elbow_to_wrist_t2': [angle_elbow_to_wrist_t2],
+                'angle_elbow_to_wrist_t3': [angle_elbow_to_wrist_t3],
+                'angle_elbow_to_wrist_t4': [angle_elbow_to_wrist_t4],
                 'nose_to_wrist': [vectors['nose_to_wrist']],
                 'nose_to_wrist_conf': [vectors_conf['nose_to_wrist']],
-                'wrist_to_index': [vectors['wrist_to_index']],
-                'wrist_to_index_conf': [vectors_conf['wrist_to_index']],
-                'index_finger': [vectors['index_finger']],
-                'index_finger_conf': [vectors_conf['index_finger']],
+                'angle_nose_to_wrist_t1': [angle_nose_to_wrist_t1],
+                'angle_nose_to_wrist_t2': [angle_nose_to_wrist_t2],
+                'angle_nose_to_wrist_t3': [angle_nose_to_wrist_t3],
+                'angle_nose_to_wrist_t4': [angle_nose_to_wrist_t4],
+                'gaze': [vectors['gaze']],
+                'gaze_conf': [vectors_conf['gaze']],
+                'angle_gaze_t1': [angle_gaze_t1],
+                'angle_gaze_t2': [angle_gaze_t2],
+                'angle_gaze_t3': [angle_gaze_t3],
+                'angle_gaze_t4': [angle_gaze_t4],
                 'wrist_location': wrist_location,
                 'landmarks': landmarks_2d,
                 'landmarks_3d': landmarks_3d
             }
+            # Add spherical values for all vector/target types
+            new_row.update(sph_dict)
         else:
             new_row = {
                 'frame': frame_num,
-                'gesture_duration': [""],
-                'pointing_confidence':self.pointing_confidence,
-                'pointing_arm': [""],
-                'eye_to_wrist': [""],
-                'eye_to_wrist_conf': [""],
-                'shoulder_to_wrist': [""],
-                'shoulder_to_wrist_conf': [""],
-                'elbow_to_wrist': [""],
-                'elbow_to_wrist_conf': [""],
-                'nose_to_wrist': [""],
-                'nose_to_wrist_conf': [""],
-                'wrist_to_index': [""],
-                'wrist_to_index_conf': [""],
-                'index_finger': [""],
-                'index_finger_conf': [""],
-                'wrist_location': [""], 
+                'time': time.time(),
+                'gesture_duration': None,
+                'pointing_confidence': self.pointing_confidence,
+                'pointing_arm': None,
+                'eye_to_wrist': [None],
+                'eye_to_wrist_conf': [None],
+                'angle_eye_to_wrist_t1': [None],
+                'angle_eye_to_wrist_t2': [None],
+                'angle_eye_to_wrist_t3': [None],
+                'angle_eye_to_wrist_t4': [None],
+                'shoulder_to_wrist': [None],
+                'shoulder_to_wrist_conf': [None],
+                'angle_shoulder_to_wrist_t1': [None],
+                'angle_shoulder_to_wrist_t2': [None],
+                'angle_shoulder_to_wrist_t3': [None],
+                'angle_shoulder_to_wrist_t4': [None],
+                'elbow_to_wrist': [None],
+                'elbow_to_wrist_conf': [None],
+                'angle_elbow_to_wrist_t1': [None],
+                'angle_elbow_to_wrist_t2': [None],
+                'angle_elbow_to_wrist_t3': [None],
+                'angle_elbow_to_wrist_t4': [None],
+                'nose_to_wrist': [None],
+                'nose_to_wrist_conf': [None],
+                'angle_nose_to_wrist_t1': [None],
+                'angle_nose_to_wrist_t2': [None],
+                'angle_nose_to_wrist_t3': [None],
+                'angle_nose_to_wrist_t4': [None],
+                'gaze': [None],
+                'gaze_conf': [None],
+                'angle_gaze_t1': [None],
+                'angle_gaze_t2': [None],
+                'angle_gaze_t3': [None],
+                'angle_gaze_t4': [None],
+                'wrist_location': [None],
                 'landmarks': landmarks_2d,
                 'landmarks_3d': landmarks_3d
             }
         new_row = pd.DataFrame(new_row)
-        
         self.data = pd.concat([self.data, new_row], ignore_index=True)
 
     def initialize_optical_flow_points(self, landmarks, w, h):
@@ -269,8 +520,30 @@ class PointingGestureDetector:
             return "Right"
         else:
             return None
-        
-            
+    
+    def pixel_to_camera_coords(u, v, depth_val, fx, fy, cx, cy):
+        """
+        Convert pixel coordinates + depth to camera coordinates.
+        """
+        x = (u - cx) * depth_val / fx
+        y = (v - cy) * depth_val / fy
+        z = depth_val
+        return np.array([x, y, z])
+
+
+    def get_camera_frame_point(self, wrist_landmark, depth_image, intrinsics):
+        u = int(wrist_landmark.x * depth_image.shape[1])
+        v = int(wrist_landmark.y * depth_image.shape[0])
+        depth_val = depth_image[v, u] / 1000.0  # mm → meters
+
+        if depth_val == 0:
+            return None
+
+        fx, fy = intrinsics['fx'], intrinsics['fy']
+        cx, cy = intrinsics['cx'], intrinsics['cy']
+        px_to_cam_coords = self.pixel_to_camera_coords(u, v, depth_val, fx, fy, cx, cy)
+    
+        return px_to_cam_coords
     def process_frame(self, image, depth_image = None, transformation_matrix = None):
         process_start = time.time()
         if image is None:
@@ -441,17 +714,16 @@ class PointingGestureDetector:
         return image
 
     def find_vectors(self, pointing_hand, landmarks):
-        """find eye-to-wrist, shoulder-to-wrist, elbow-to-wrist, and wrist-to-index vectors
+        """find eye-to-wrist, shoulder-to-wrist, elbow-to-wrist, and wrist-to-index vectors,
+        as well as gaze vector (eye centroid to nose).
         return a dictionary of all vectors and normalized wrist location
         """
         try:
             wrist = landmarks.landmark[
                 mp.solutions.pose.PoseLandmark.LEFT_WRIST if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
-            
         except (IndexError, TypeError):
             wrist = None
-       
-            
+
         try:
             elbow = landmarks.landmark[
                 mp.solutions.pose.PoseLandmark.LEFT_ELBOW if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_ELBOW
@@ -472,23 +744,36 @@ class PointingGestureDetector:
             ]
         except (IndexError, AttributeError):
             eye = None
-        
         try:
             nose = landmarks.landmark[mp.solutions.pose.PoseLandmark.NOSE]
         except (IndexError, AttributeError):
             nose = None
 
+        # Compute the centroid of the two eyes
+        try:
+            left_eye = landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_EYE]
+            right_eye = landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_EYE]
+            eye_centroid = Landmark()
+            eye_centroid.x = (left_eye.x + right_eye.x) / 2
+            eye_centroid.y = (left_eye.y + right_eye.y) / 2
+            eye_centroid.z = (left_eye.z + right_eye.z) / 2
+        except (IndexError, AttributeError):
+            eye_centroid = None
+
         eye_to_wrist_vector = calculate_vector(eye, wrist)
         shoulder_to_wrist_vector = calculate_vector(shoulder, wrist)
         elbow_to_wrist_vector = calculate_vector(elbow, wrist)
         nose_to_wrist_vector = calculate_vector(nose, wrist)
-
+        # Gaze vector: from eye centroid to nose
+        gaze_vector = calculate_vector(eye_centroid, nose)
 
         eye_to_wrist_vector_conf = calculate_vector_conf(eye, wrist)
         shoulder_to_wrist_vector_conf = calculate_vector_conf(shoulder, wrist)
         elbow_to_wrist_vector_conf = calculate_vector_conf(elbow, wrist)
         nose_to_wrist_vector_conf = calculate_vector_conf(nose, wrist)
-        
+        # Gaze confidence
+        gaze_vector_conf = calculate_vector_conf(eye_centroid, nose)
+
         hand_vector_conf = self.hand_confidence
         if pointing_hand is not None:
             try:
@@ -505,31 +790,62 @@ class PointingGestureDetector:
                 wrist_to_index_vector = calculate_vector(wrist, index_finger_tip)
         else:
             index_finger_tip = landmarks.landmark[
-                    mp.solutions.pose.PoseLandmark.LEFT_INDEX if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_INDEX
-                ]
+                mp.solutions.pose.PoseLandmark.LEFT_INDEX if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_INDEX
+            ]
             index_finger_mcp = None
             index_finger_vector = None
             wrist_to_index_vector = calculate_vector(wrist, index_finger_tip)
-        
+
         vectors = {
             "eye_to_wrist": eye_to_wrist_vector,
             "shoulder_to_wrist": shoulder_to_wrist_vector,
             "elbow_to_wrist": elbow_to_wrist_vector,
-            "nose_to_wrist": nose_to_wrist_vector, 
+            "nose_to_wrist": nose_to_wrist_vector,
             "wrist_to_index": wrist_to_index_vector,
-            "index_finger": index_finger_vector
+            "index_finger": index_finger_vector,
+            "gaze": gaze_vector
         }
-        
-        vectors_conf  = {
+
+        vectors_conf = {
             "eye_to_wrist": eye_to_wrist_vector_conf,
             "shoulder_to_wrist": shoulder_to_wrist_vector_conf,
             "elbow_to_wrist": elbow_to_wrist_vector_conf,
-            "nose_to_wrist": nose_to_wrist_vector_conf, 
+            "nose_to_wrist": nose_to_wrist_vector_conf,
             "wrist_to_index": hand_vector_conf,
-            "index_finger": hand_vector_conf
+            "index_finger": hand_vector_conf,
+            "gaze": gaze_vector_conf
         }
         return vectors, vectors_conf
-        
+    import numpy as np
+
+    def angle_to_target(self, origin, vector, target):
+        """
+        Compute the angle (in degrees) between a pointing vector and the direction to a target.
+
+        Args:
+            origin (np.ndarray): 3D coordinates of the pointing origin (e.g. wrist) [x, y, z]
+            vector (np.ndarray): 3D pointing vector direction [dx, dy, dz]
+            target (np.ndarray): 3D coordinates of the target point [x, y, z]
+
+        Returns:
+            float: angle in degrees between the pointing vector and the direction to the target
+        """
+        if origin is None or vector is None or target is None:
+            return None
+
+        # Normalize vector
+        vec_norm = vector / np.linalg.norm(vector)
+        origin = np.array([origin.x, origin.y, origin.z])
+        # Direction from origin to target
+        target_dir = target - origin
+        target_dir_norm = target_dir / np.linalg.norm(target_dir)
+
+        # Dot product and angle
+        dot_product = np.dot(vec_norm, target_dir_norm)
+        dot_product = np.clip(dot_product, -1.0, 1.0)  # Avoid numerical issues
+        angle_rad = np.arccos(dot_product)
+        return np.degrees(angle_rad)
+
     def landmark_to_vector(self, landmark):
         if landmark is None:
             return None
@@ -542,9 +858,9 @@ class PointingGestureDetector:
         return Landmark(x=vector[0], y=vector[1], z=vector[2])
 
     def find_joint_locations(self, pointing_hand, landmarks, concat = False):
-        
         """find eye-to-wrist, shoulder-to-wrist, elbow-to-wrist, and wrist-to-index vectors
         return a dictionary of all vectors and normalized wrist location
+        Also adds gaze_origin (midpoint between eyes) and gaze_target (nose landmark).
         """
         # if 3d location is passed in, we need to concat the hand detection onto body
         # to ensure that center is still from human body
@@ -557,8 +873,6 @@ class PointingGestureDetector:
         if pointing_hand is not None:
             try:
                 wrist_hand = pointing_hand[mp.solutions.hands.HandLandmark.WRIST]
-                
-                
                 wrist_hand_vector = np.array([wrist_hand.x, wrist_hand.y, wrist_hand.z])
                 wrist_offset = wrist_vector - wrist_hand_vector
             except (IndexError, TypeError):
@@ -568,12 +882,10 @@ class PointingGestureDetector:
                 index_finger_tip = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
             except (IndexError, TypeError):
                 index_finger_tip = None
-            
             try:
                 index_finger_mcp = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
             except (IndexError, TypeError):
                 index_finger_mcp = None
-        
             if concat and wrist_offset is not None:
                 index_finger_tip = self.vector_to_landmark(self.landmark_to_vector(wrist) + self.landmark_to_vector(index_finger_tip) - wrist_offset)
                 index_finger_mcp = self.vector_to_landmark(self.landmark_to_vector(wrist) + self.landmark_to_vector(index_finger_mcp) - wrist_offset)
@@ -609,6 +921,17 @@ class PointingGestureDetector:
         except (IndexError, AttributeError):
             nose = None
 
+        # Add support for gaze_origin (midpoint between left and right eyes)
+        try:
+            left_eye = landmarks.landmark[mp.solutions.pose.PoseLandmark.LEFT_EYE]
+            right_eye = landmarks.landmark[mp.solutions.pose.PoseLandmark.RIGHT_EYE]
+            gaze_origin = Landmark()
+            gaze_origin.x = (left_eye.x + right_eye.x) / 2
+            gaze_origin.y = (left_eye.y + right_eye.y) / 2
+            gaze_origin.z = (left_eye.z + right_eye.z) / 2
+        except (IndexError, AttributeError):
+            gaze_origin = None
+
         return {
             "eye": eye,
             "eye_middle": eye_middle,
@@ -617,7 +940,9 @@ class PointingGestureDetector:
             "nose": nose,
             "wrist": wrist,
             "index_finger": index_finger_tip,
-            "index_finger_mcp":index_finger_mcp
+            "index_finger_mcp": index_finger_mcp,
+            "gaze_origin": gaze_origin,
+            "gaze_target": nose
         }
         
         
@@ -627,16 +952,17 @@ class PointingGestureDetector:
         eye = joints["eye"]
         elbow = joints["elbow"]
         index_finger_tip = joints["index_finger"]
-        index_finger_mcp = joints["index_finger_mcp"]
+        # index_finger_mcp = joints["index_finger_mcp"]
             
         visualize_vector(image, wrist, vectors["shoulder_to_wrist"], self.__SHOULDER_WRIST_COLOR)
         visualize_vector(image, wrist, vectors["elbow_to_wrist"], self.__ELBOW_WRIST_COLOR)
         visualize_vector(image, wrist, vectors["eye_to_wrist"], self.__EYE_WRIST_COLOR)
+        visualize_vector(image, wrist, vectors["eye_to_wrist"], self.__NOSE_WRIST_COLOR)
         
-        if index_finger_tip is not None:
-            visualize_vector(image, index_finger_tip, vectors["wrist_to_index"], self.__WRIST_INDEX_COLOR)
-        if index_finger_mcp is not None:
-            visualize_vector(image, index_finger_tip, vectors["index_finger"], self.__INDEX_COLOR)
+        # if index_finger_tip is not None:
+        #     visualize_vector(image, index_finger_tip, vectors["wrist_to_index"], self.__WRIST_INDEX_COLOR)
+        # if index_finger_mcp is not None:
+        #     visualize_vector(image, index_finger_tip, vectors["index_finger"], self.__INDEX_COLOR)
 
     def display_info(self, image, pointing_hand_handedness, arm_handedness, gesture_duration, vectors):
         txt_c = (55, 65, 64)
@@ -652,10 +978,10 @@ class PointingGestureDetector:
             cv2.putText(image, f"Elbow-to-Wrist: {vectors['elbow_to_wrist']}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.__ELBOW_WRIST_COLOR, 2)
         if vectors['nose_to_wrist'] is not None:
             cv2.putText(image, f"nose-to-Index: {vectors['nose_to_wrist']}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.__NOSE_WRIST_COLOR, 2)
-        if vectors['wrist_to_index'] is not None:
-            cv2.putText(image, f"wrist-to-index: {vectors['wrist_to_index']}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.__WRIST_INDEX_COLOR, 2)
-        if vectors['index_finger'] is not None:
-            cv2.putText(image, f"index_finger: {vectors['index_finger']}", (10, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.__INDEX_COLOR, 2)
+        # if vectors['wrist_to_index'] is not None:
+        #     cv2.putText(image, f"wrist-to-index: {vectors['wrist_to_index']}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.__WRIST_INDEX_COLOR, 2)
+        # if vectors['index_finger'] is not None:
+        #     cv2.putText(image, f"index_finger: {vectors['index_finger']}", (10, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.__INDEX_COLOR, 2)
     
         
     def run_stream(self, use_tag = False):
@@ -680,39 +1006,92 @@ class PointingGestureDetector:
         cap.release()
         cv2.destroyAllWindows()
 
-    def run_video(self, video_path):
-        """Runs the gesture detection on a local video file"""
-            
-        cap = cv2.VideoCapture(video_path)  # Open the video file
-        frame_num = 0
-        if not cap.isOpened():
-            print(f"Error: Could not open video {video_path}")
+    def run_video(self, color_path, depth_path=None):
+        """Runs the gesture detection on a local video file. Optionally uses a depth video if provided."""
+
+        color_cap = cv2.VideoCapture(color_path)
+        depth_cap = cv2.VideoCapture(depth_path) if depth_path else None
+
+        if not color_cap.isOpened():
+            print(f"Error: Could not open color video {color_path}")
             return
-        
-        while cap.isOpened():
-            success, image = cap.read()
-            if not success:
+        if depth_cap and not depth_cap.isOpened():
+            print(f"Warning: Depth video {depth_path} could not be opened. Running in color-only mode.")
+            depth_cap = None
+
+        frame_num = 0
+        output_path = color_path[:-4] + "_output"
+        os.makedirs(output_path, exist_ok=True)
+
+        while color_cap.isOpened():
+            success_color, color_frame = color_cap.read()
+            if not success_color:
                 break
 
-            # Flip image horizontally if necessary, else remove the flip
-            # image = cv2.flip(image, 1)
-            h, w, _= image.shape
-            px = w//2
-            py = h//2
-            processed_image = self.process_frame(image)
-            cv2.imshow('Pointing Gesture Detection', processed_image)
-            import os
-            output_path = video_path[0:-4]
-            # Create the directory if it does not exist
-            if not os.path.exists(output_path):
-                os.makedirs(output_path)
+            if depth_cap:
+                success_depth, depth_frame = depth_cap.read()
+                if not success_depth:
+                    print(f"Warning: Ran out of depth frames at frame {frame_num}")
+                    break
 
-            cv2.imwrite(output_path+'/f%i.png'%(frame_num), processed_image)
+                # Optional: Convert depth frame if it's not in 16-bit already
+                if depth_frame.dtype != np.uint16:
+                    depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_BGR2GRAY)
+                    depth_frame = (depth_frame.astype(np.uint16) << 8)
+            else:
+                depth_frame = None
+
+            h, w, _ = color_frame.shape
+            self.px = w // 2
+            self.py = h // 2
+
+            processed = self.process_frame(color_frame, depth_image=depth_frame)
+            cv2.imshow('Pointing Gesture Detection', processed)
+            cv2.imwrite(f"{output_path}/f{frame_num:04d}.png", processed)
+
             frame_num += 1
-            if cv2.waitKey(5) & 0xFF == 27:  # Press 'ESC' to exit
+            if cv2.waitKey(5) & 0xFF == 27:  # ESC
                 break
-        cap.release()
+
+        color_cap.release()
+        if depth_cap:
+            depth_cap.release()
         cv2.destroyAllWindows()
+
+
+    # def run_video(self, video_path):
+    #     """Runs the gesture detection on a local video file"""
+            
+    #     cap = cv2.VideoCapture(video_path)  # Open the video file
+    #     frame_num = 0
+    #     if not cap.isOpened():
+    #         print(f"Error: Could not open video {video_path}")
+    #         return
+        
+    #     while cap.isOpened():
+    #         success, image = cap.read()
+    #         if not success:
+    #             break
+
+    #         # Flip image horizontally if necessary, else remove the flip
+    #         # image = cv2.flip(image, 1)
+    #         h, w, _= image.shape
+    #         px = w//2
+    #         py = h//2
+    #         processed_image = self.process_frame(image)
+    #         cv2.imshow('Pointing Gesture Detection', processed_image)
+    #         import os
+    #         output_path = video_path[0:-4]
+    #         # Create the directory if it does not exist
+    #         if not os.path.exists(output_path):
+    #             os.makedirs(output_path)
+
+    #         cv2.imwrite(output_path+'/f%i.png'%(frame_num), processed_image)
+    #         frame_num += 1
+    #         if cv2.waitKey(5) & 0xFF == 27:  # Press 'ESC' to exit
+    #             break
+    #     cap.release()
+    #     cv2.destroyAllWindows()
     
     def run_image_folder(self, folder_path = '', output_csv_path = ''):
         """
@@ -778,29 +1157,7 @@ class PointingGestureDetector:
         # Save the data to a CSV file
         self.data.to_csv(output_csv_path, index=False)
         print(f"Results saved to {output_csv_path}")
-    
-    def run_spot(self):
-        # connect to Spot robot
-        # read deapth color images and transformation image
-        prev_image = None
-        process_start = time.time()
-        data = read_json_locked("./spot_util/hand_intrinsics_and_transform.json")
-            
-        depth = cv2.imread('./spot_util/hand_depth_image.png', cv2.IMREAD_UNCHANGED)
-        
-        image = cv2.imread('./spot_util/hand_color_image.png')
-        
-        
-        # if prev_image is None or not np.array_equal(image, prev_image):
-        #     prev_image = image
-        self.process_frame(image, depth_image = depth, transformation_matrix=data)
-        process_end = time.time()
-        print(f"process_time is {np.round(process_end - process_start, 3)}s")
-        
-      
-        
-        
-        return  self.pointing
+
 # Usage
 if __name__ == "__main__":
         
@@ -834,11 +1191,22 @@ if __name__ == "__main__":
         # detector.run_stream()
         # TODO: comment out after testing
         # video_path = '/Users/ivy/Desktop/gesture_eval_right.mov'
-        video_path = '/Users/ivy/Desktop/gesture_test.mp4'
+        # video_path = '/Users/ivy/Desktop/gesture_test.mp4'
+        video_path = '/home/xhe71/Desktop/dog_data/BDL204_Waffle/1/Color.mp4'
+        depth_path = '/home/xhe71/Desktop/dog_data/BDL204_Waffle/1/Depth.mp4'
         # video_path = '/Users/ivy/Desktop/spot_gesture_eval/1003/gesture_eval_test/'
-        args.csv_path = '/Users/ivy/Desktop/gesture_output.csv'
-
-        detector.run_video(video_path)
+        args.csv_path = '/home/xhe71/Desktop/dog_data/BDL204_Waffle/1/gesture_data.csv'
+        bag_path = '/home/xhe71/Desktop/dog_data/BDL204_Waffle/BDL204_Waffles_PVP_01.bag'
+        # px = 320
+        # py = 240
+        # fx = 552.0291012161067
+        # fy = 552.0291012161067
+        intr = find_realsense_intrinsics(bag_path)
+        px = intr.ppx
+        py = intr.ppy
+        fx = intr.fx
+        fy = intr.fy
+        detector.run_video(video_path, depth_path)
         
     detector.data.to_csv(args.csv_path, index=False)
     print(f"Data saved to {args.csv_path}")

@@ -14,14 +14,26 @@ profile = pipeline.start(cfg)
 frames = pipeline.wait_for_frames()
 depth_stream = profile.get_stream(rs.stream.depth)
 intrinsics = depth_stream.as_video_stream_profile().get_intrinsics()
+
+# Get depth sensor
+depth_sensor = profile.get_device().first_depth_sensor()
+# Query clipping planes
+near = depth_sensor.get_depth_scale()  # not exactly near plane, but scale factor
+min_range = depth_sensor.get_option(rs.option.min_distance)
+max_range = depth_sensor.get_option(rs.option.max_distance)
+
+print(f"Depth scale: {near} meters/unit")
+print(f"Min sensing distance (near): {min_range:.3f} m")
+print(f"Max sensing distance (far): {max_range:.3f} m")
+
 pipeline.stop()
 
 fx, fy = intrinsics.fx, intrinsics.fy
 cx, cy = intrinsics.ppx, intrinsics.ppy
 
 # Load color and depth raw images
-color_path = '/home/xhe71/Desktop/dog_data/BDL204_Waffle/Color/_Color_1401.raw'
-depth_path = '/home/xhe71/Desktop/dog_data/BDL204_Waffle/Depth/_Depth_1401.raw'
+color_path = '/home/xhe71/Desktop/dog_data/BDL244_Hannah/1/Depth/_Color_0086.raw'
+depth_path = '/home/xhe71/Desktop/dog_data/BDL244_Hannah/1/Depth/_Depth_0086.raw'
 width = 1280
 height = 720
 

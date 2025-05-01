@@ -12,6 +12,7 @@ data/.DS_Store
 data/sample/.DS_Store
 data/test/VConfig/.DS_Store
 data/test/.DS_Store
+dog_data/
 .DS_Store
 .DS_Store
 visualize/__pycache__/gesture_detection.cpython-312.pyc
