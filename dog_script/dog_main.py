@@ -9,8 +9,8 @@ def process_dog(folder_path, side_view=False):
         if not os.path.isdir(folder_full_path) or not folder_name.isdigit():
             continue
 
-        # video_path = os.path.join(folder_full_path, 'Color.mp4')
-        # detect_dog(video_path)
+        video_path = os.path.join(folder_full_path, 'Color.mp4')
+        detect_dog(video_path)
 
         json_files = [f for f in os.listdir(folder_full_path) if f.endswith('.json') and 'Color' in f]
         if not json_files:
