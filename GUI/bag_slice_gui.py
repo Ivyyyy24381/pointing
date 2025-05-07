@@ -138,10 +138,19 @@ class RosbagSlicerGUI:
             print("Processing in CSV slicing mode...")
             self.process_batch_split(self.rosbag_path, self.csv_path)
         elif self.auto_slice_var.get():
-            # Mode 2: Automatic slicing mode
             print("Processing in automatic slicing mode...")
-            output_folder = self.process_single_rosbag(self.rosbag_path, start_time, end_time)
+            output_folder = os.path.dirname(self.rosbag_path)
+
+            already_processed = os.path.exists(os.path.join(output_folder, "Color.mp4")) and \
+                                os.path.exists(os.path.join(output_folder, "Depth.mp4"))
+            
+            if already_processed:
+                print("Found existing videos, skipping rosbag processing.")
+            else:
+                output_folder = self.process_single_rosbag(self.rosbag_path, start_time, end_time)
+
             self.automatic_slicing_policy(output_folder)
+            # self.automatic_slicing_policy(output_folder)
         else:
             # Mode 3: No input (default) - slice entire bag based on start/end time
             print("Processing entire bag with no external input...")
@@ -152,13 +161,11 @@ class RosbagSlicerGUI:
             try:
                 # Step 1: Generate full video
                 self.status_label.config(text="Generating full video for analysis...")
-                
-                color_video_path = os.path.join(output_folder, 'Color.mp4')
-                depth_video_path = os.path.join(output_folder, 'Depth.mp4')
+                color_dir = os.path.join(output_folder, 'Color')
+                depth_dir = os.path.join(output_folder, 'Depth')
 
-                # Step 2: Analyze videos for split points
                 self.status_label.config(text="Analyzing video for split points...")
-                split_points = self.find_split_points(color_video_path, depth_video_path)
+                split_points = self.find_split_points(color_dir, depth_dir)
 
                 # Step 3: Update CSV with identified splits
                 self.status_label.config(text="Updating CSV with split points...")
@@ -173,9 +180,7 @@ class RosbagSlicerGUI:
             except Exception as e:
                 messagebox.showerror("Error", str(e))
 
-    def find_split_points(self, color_video_path, depth_video_path):
-        cap_color = cv2.VideoCapture(color_video_path)
-        cap_depth = cv2.VideoCapture(depth_video_path)
+    def find_split_points(self, color_folder, depth_folder):
         red_found = False
         frame_idx = 0
         split_points = []
@@ -183,50 +188,45 @@ class RosbagSlicerGUI:
         red_frame_time = 0
         green_frame_time = 0
 
-        while cap_color.isOpened() and cap_depth.isOpened():
-            ret_color, frame_color = cap_color.read()
-            ret_depth, frame_depth = cap_depth.read()
+        while True:
+            color_path = os.path.join(color_folder, f"_Color_{frame_idx:04d}.png")
+            depth_path = os.path.join(depth_folder, f"_Depth_{frame_idx:04d}.png")
 
-            # Break the loop if no more frames are available
-            if not ret_color and not ret_depth:
-
-                print(f"End of video reached at frame index {frame_idx}")
+            if not os.path.exists(color_path) or not os.path.exists(depth_path):
+                print(f"No more frames at index {frame_idx}")
                 if red_found:
-                    # Use the last valid frame as the green_frame_time (i.e., end)
-                    green_frame_time = frame_idx - 1  # -1 because we're now past the last valid frame
+                    green_frame_time = frame_idx - 1
                     split_points.append((red_frame_time, green_frame_time))
                     print(f"No green frame after red. Final split added: ({red_frame_time}, {green_frame_time})")
                     red_found = False
                 break
 
-            # Skip the frame if either color or depth frame is not readable
-            if not ret_color or not ret_depth or frame_color is None or frame_depth is None:
+            frame_color = cv2.imread(color_path)
+            frame_depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+
+            if frame_color is None or frame_depth is None:
                 print(f"Warning: Skipping unreadable frame at index {frame_idx}")
                 frame_idx += 1
                 continue
 
-            # Check the shape of frame_color to ensure it's valid
-            if frame_color.shape[2] != 3:  # Ensure we have a color frame with 3 channels
+            if frame_color.shape[2] != 3:
                 print(f"Error: Skipping frame with invalid color shape at index {frame_idx}")
                 frame_idx += 1
                 continue
 
             try:
-                # Calculate average red, green, and depth values
-                red_channel = int(np.mean(frame_color[:, :, 2]))  # Red channel
-                green_channel = int(np.mean(frame_color[:, :, 1]))  # Green channel
-                depth_channel = int(np.mean(frame_depth))  # Depth channel
+                red_channel = int(np.mean(frame_color[:, :, 2]))
+                green_channel = int(np.mean(frame_color[:, :, 1]))
+                depth_channel = int(np.mean(frame_depth))
 
                 print(f"Frame {frame_idx}: red: {red_channel}, green: {green_channel}, depth: {depth_channel}")
-                import matplotlib.pyplot as plt
 
-                # Show color frame with overlay text
                 overlay = frame_color.copy()
                 cv2.putText(overlay, f"Frame: {frame_idx} R:{red_channel} G:{green_channel} D:{int(depth_channel)}",
                             (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
                 cv2.imshow("Color", overlay)
-                cv2.imshow("Depth", frame_depth.astype(np.uint8))  # Scale if needed
+                cv2.imshow("Depth", frame_depth.astype(np.uint8))
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
@@ -236,36 +236,32 @@ class RosbagSlicerGUI:
                 frame_idx += 1
                 continue
 
-            # Store the last 10 frames to compare
             previous_frames.append((red_channel, green_channel, depth_channel))
             if len(previous_frames) > 5:
                 previous_frames.pop()
-            # Check for depth < 5 as the start marker (red found when depth < 5 and red is dominant)
-            
 
             if depth_channel < 5:
                 if not red_found and red_channel > green_channel:
-                    red_frame_time = frame_idx  # Convert frame index to time in seconds
+                    red_frame_time = frame_idx
                     red_found = True
-
                     print(f"Red frame detected at frame {red_frame_time}.")
-                    time.sleep(1)                
-                elif red_found and green_channel > red_channel:
-                    green_frame_time = frame_idx  # Convert frame index to time in seconds
                     time.sleep(1)
-                    split_points.append((red_frame_time, green_frame_time))  # Add split point
-                    red_found = False  # Reset for the next red-green pair
+                elif red_found and green_channel > red_channel:
+                    green_frame_time = frame_idx
+                    time.sleep(1)
+                    split_points.append((red_frame_time, green_frame_time))
+                    red_found = False
                     print(f"Green frame detected at frame {green_frame_time} seconds. Split added.")
 
-                    
             frame_idx += 1
-        cv2.destroyAllWindows()
-        cap_color.release()
-        cap_depth.release()
 
-        # Return split points with only the timestamps (ignore 'red'/'green' tag)
+        cv2.destroyAllWindows()
         print(split_points)
         return split_points
+
+        # # Return split points with only the timestamps (ignore 'red'/'green' tag)
+        # print(split_points)
+        # return split_points
 
     def update_csv_with_splits(self, csv_path, split_intervals):
         df = pd.DataFrame(split_intervals, columns=['start_seconds', 'end_seconds'])
@@ -277,23 +273,59 @@ class RosbagSlicerGUI:
         if output_folder:
             try:
                 self.progress_bar['maximum'] = 100
-                self.status_label.config(text="Running rs-convert...")
-                self.progress_bar['value'] = 30
-                intr, recorded_fps, duration, total_frames = run_rs_convert(rosbag_path, output_folder, start_time, end_time)
+
+                color_dir = os.path.join(output_folder, 'Color')
+                depth_dir = os.path.join(output_folder, 'Depth')
+
+                # Check if frames already exist (threshold: >10 frames)
+                color_frames_exist = os.path.isdir(color_dir) and len(os.listdir(color_dir)) > 10
+                depth_frames_exist = os.path.isdir(depth_dir) and len(os.listdir(depth_dir)) > 10
+
+                color_video_path = os.path.join(output_folder, 'Color.mp4') 
+                depth_video_path = os.path.join(output_folder, 'Depth.mp4') 
+                output_video_path = os.path.join(output_folder, "output.mp4")
+
+                videos_exist = all([
+                    os.path.exists(color_video_path),
+                    os.path.exists(depth_video_path),
+                    os.path.exists(output_video_path)
+                ])
+
+                if color_frames_exist and depth_frames_exist and videos_exist:
+                    print("Frames and videos already exist. Skipping rs-convert and video processing.")
+                    self.progress_bar['value'] = 100
+                    return output_folder
+
+                if color_frames_exist and depth_frames_exist:
+                    print("Frames already exist. Skipping rs-convert.")
+                    intr, recorded_fps, duration, total_frames = (None, 30, 10, 300)
+                else:
+                    self.status_label.config(text="Running rs-convert...")
+                    self.progress_bar['value'] = 30
+                    print("Frames not found or incomplete. Running rs-convert...")
+                    intr, recorded_fps, duration, total_frames = run_rs_convert(rosbag_path, output_folder, start_time, end_time)
+
+                # If videos already exist, skip video conversion and concatenation
+                if videos_exist:
+                    print("Videos already exist. Skipping video conversion and concatenation.")
+                    self.progress_bar['value'] = 100
+                    return output_folder
+
+                # Convert duration to seconds if it is a timedelta
+                if hasattr(duration, "total_seconds"):
+                    duration = duration.total_seconds()
 
                 self.status_label.config(text="Converting images to videos...")
                 self.progress_bar['value'] = 60
-                frate = total_frames * 2 / duration
+                frate = total_frames  / duration / 2
                 run_ffmpeg_convert(output_folder, framerate = frate)
 
                 self.status_label.config(text="Concatenating videos...")
                 self.progress_bar['value'] = 90
-                color_video_path = os.path.join(output_folder, 'Color.mp4') 
-                depth_video_path = os.path.join(output_folder, 'Depth.mp4') 
-                concat_videos(color_video_path, depth_video_path, os.path.join(output_folder, "output.mp4"))
+                concat_videos(color_video_path, depth_video_path, output_video_path)
 
                 self.progress_bar['value'] = 100
-                messagebox.showinfo("Success", f"Video processed and saved in {output_folder}")
+                # messagebox.showinfo("Success", f"Video processed and saved in {output_folder}")
             except Exception as e:
                 messagebox.showerror("Error", str(e))
         return output_folder
@@ -304,10 +336,12 @@ class RosbagSlicerGUI:
         os.makedirs(os.path.join(out_dir, "Color"), exist_ok=True)
         os.makedirs(os.path.join(out_dir, "Depth"), exist_ok=True)
         os.makedirs(os.path.join(out_dir, "Depth_Color"), exist_ok=True)
-        os.makedirs(os.path.join(out_dir, "Raw"), exist_ok=True)
+        # os.makedirs(os.path.join(out_dir, "Raw"), exist_ok=True)
 
         start_frame = int(start_frame)
         end_frame = int(end_frame)
+
+        print(f"Copying frames from {start_frame} to {end_frame - 1} into {out_dir}")
 
         for idx in range(start_frame, end_frame):
             color_src = os.path.join(color_dir, f"_Color_{idx:04d}.png")
@@ -327,20 +361,27 @@ class RosbagSlicerGUI:
             color_raw_dst = os.path.join(out_dir, "Color",  f"_Color_{idx:04d}.raw")
             depth_raw_dst = os.path.join(out_dir, "Depth",  f"_Depth_{idx:04d}.raw")
             depth_color_raw_dst = os.path.join(out_dir, "Depth_Color",f"_Depth_Color_{idx:04d}.raw")
+
             # Copy images
             if os.path.exists(color_src):
                 shutil.copy2(color_src, color_dst)
+            else:
+                print(f"Warning: Missing color frame {color_src}")
             if os.path.exists(depth_src):
                 shutil.copy2(depth_src, depth_dst)
+            else:
+                print(f"Warning: Missing depth frame {depth_src}")
             if os.path.exists(depth_color_src):
                 shutil.copy2(depth_color_src, depth_color_dst)
+            else:
+                print(f"Warning: Missing depth_color frame {depth_color_src}")
 
             # Copy raw files
             if os.path.exists(color_raw_src):
                 shutil.copy2(color_raw_src, color_raw_dst)
             if os.path.exists(depth_raw_src):
                 shutil.copy2(depth_raw_src, depth_raw_dst)
-            if os.path.exists(depth_raw_src):
+            if os.path.exists(depth_color_raw_src):
                 shutil.copy2(depth_color_raw_src, depth_color_raw_dst)
 
 
@@ -355,12 +396,28 @@ class RosbagSlicerGUI:
                 self.progress_bar['maximum'] = total_rows
 
                 # Step 1: Pre-extract all frames (full rosbag)
-                print("Extracting full rosbag frames using rs-convert...")
-                intr, recorded_fps, duration, total_frames = run_rs_convert(rosbag_path, output_folder, 0, 15000)  # Process from 0s to max
-                frate = total_frames * 2 / duration
                 color_dir = os.path.join(output_folder, 'Color/')
                 depth_dir = os.path.join(output_folder, 'Depth/')
                 depth_color_dir = os.path.join(output_folder, 'Depth_Color/')
+
+                color_frames_exist = os.path.isdir(color_dir) and len(os.listdir(color_dir)) > 10
+                depth_frames_exist = os.path.isdir(depth_dir) and len(os.listdir(depth_dir)) > 10
+                depth_color_frames_exist = os.path.isdir(depth_color_dir) and len(os.listdir(depth_color_dir)) > 10
+
+                if color_frames_exist and depth_frames_exist and depth_color_frames_exist:
+                    print("Frames already exist. Skipping rs-convert.")
+                    intr, recorded_fps, duration, total_frames = (None, 30, 10, 300)
+                else:
+                    print("Extracting full rosbag frames using rs-convert...")
+                    intr, recorded_fps, duration, total_frames = run_rs_convert(rosbag_path, output_folder, 0, 15000)
+
+                # Convert duration to seconds if it is a timedelta
+                if hasattr(duration, "total_seconds"):
+                    duration = duration.total_seconds()
+                if total_frames == 300:
+                    frate = 12
+                else:
+                    frate = total_frames / duration / 2
 
                 # Step 2: Loop through CSV, slice frames
                 for i, row in df.iterrows():

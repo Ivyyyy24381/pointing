@@ -7,10 +7,11 @@ import glob
 import numpy as np
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d import art3d
 import json
 import re
 
-root_dir = "dog_data/BDL204_Waffles-CAM2/"
+root_dir = "dog_data/BDL251_Josi_side/"
 dog_match = re.search(r'(BDL\d+)', root_dir)
 dog_id = dog_match.group(1) if dog_match else None
 metadata_csv = 'PVP_Comprehension_Data.csv'
@@ -63,7 +64,7 @@ for csv in all_csvs:
     all_data.append(df)
 
 global_df = pd.concat(all_data, ignore_index=True)
-global_df.to_csv("global_cleaned_data.csv", index=False)
+global_df.to_csv(root_dir+"global_cleaned_data.csv", index=False)
 print("✅ Saved global_cleaned_data.csv with", len(global_df), "rows.")
 
 
@@ -149,6 +150,11 @@ for tgt in [1, 2, 3, 4]:
         for i, point in enumerate(target_points):
             ax.scatter(point[0], point[1], point[2], c='grey', marker='s', s=80)
             ax.text(point[0], point[1], point[2], f"Target {i+1}", color='black', fontsize=10, weight='bold')
+            if i+1 == tgt:
+                # Draw a translucent circle for the current target
+                circle = plt.Circle((point[0], point[1]), 0.2, color='orange', alpha=0.3)
+                ax.add_patch(circle)
+                art3d.pathpatch_2d_to_3d(circle, z=point[2], zdir="z")
 
         ax.set_xlabel("X (meters)")
         ax.set_ylabel("Y (meters)")
@@ -157,8 +163,8 @@ for tgt in [1, 2, 3, 4]:
         handles, labels = ax.get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         ax.legend(by_label.values(), by_label.keys())
-        plt.title(f"Combined 3D Trace for Target {tgt} (Rainbow resets per trial)")
-        plt.savefig(f"global_trace_target_{tgt}_3d.png")
+        plt.title(f"Combined 3D Trace for Target {tgt} - {dog_id} {dog_name}")
+        plt.savefig(root_dir+f"global_trace_target_{tgt}_3d.png")
         plt.close()
 
         # Plot 2D
@@ -176,11 +182,24 @@ for tgt in [1, 2, 3, 4]:
         # --- Insert 2D spline visualization ---
         for idx, trial_2d in enumerate(trace_2d_per_target[tgt]):
             if trial_2d.shape[0] >= 3:
+                # Remove duplicate consecutive points
+                unique_2d = [(trial_2d[0,0], trial_2d[0,1])]
+                for xi, zi in zip(trial_2d[1:,0], trial_2d[1:,1]):
+                    if not np.allclose([xi, zi], unique_2d[-1]):
+                        unique_2d.append((xi, zi))
+                # Fallback if too few unique points after duplicate removal
+                if len(unique_2d) >= 2:
+                    x_unique, z_unique = zip(*unique_2d)
+                else:
+                    # Fallback: use original points without duplicate removal
+                    print(f"Not enough unique points after duplicate removal for trial {idx+1} in target {tgt}, using original points.")
+                    x_unique = trial_2d[:, 0]
+                    z_unique = trial_2d[:, 1]
+                spline_degree_2d = min(3, len(x_unique) - 1)
                 try:
-                    tck_2d, u_2d = splprep([trial_2d[:, 0], trial_2d[:, 1]], s=0.5)
+                    tck_2d, u_2d = splprep([x_unique, z_unique], s=0.5, k=spline_degree_2d)
                     unew_2d = np.linspace(0, 1.0, 300)
                     out_2d = splev(unew_2d, tck_2d)
-                    # Extract actual trial_number from the corresponding dataframe
                     if idx < len(trial_dfs_per_target[tgt]):
                         trial_df = trial_dfs_per_target[tgt][idx]
                         if 'trial_number' in trial_df.columns and not trial_df.empty:
@@ -189,15 +208,29 @@ for tgt in [1, 2, 3, 4]:
                             trial_number = idx + 1
                     else:
                         trial_number = idx + 1
-                    # Plot the entire spline with a fixed color for this trial, add label for legend
                     plt.plot(out_2d[0], out_2d[1], color=spline_colors_2d[idx], linewidth=2, alpha=0.8, label=f'Trial {trial_number}')
                 except Exception as e:
-                    print(f"2D Spline fitting failed for a trial in target {tgt}: {e}")
+                    if idx < len(trial_dfs_per_target[tgt]):
+                        trial_df = trial_dfs_per_target[tgt][idx]
+                        if 'trial_number' in trial_df.columns and not trial_df.empty:
+                            trial_number = trial_df['trial_number'].iloc[0]
+                        else:
+                            trial_number = idx + 1
+                    else:
+                        trial_number = idx + 1
+                    print(f"2D Spline fitting failed for trial {idx+1} in target {tgt}, drawing simple line instead: {e}")
+                    print(f"Fallback line X coords: {x_unique}")
+                    print(f"Fallback line Z coords: {z_unique}")
+                    plt.plot(x_unique, z_unique, color=spline_colors_2d[idx], linewidth=2, alpha=0.8, label=f'Trial {trial_number}')
+                    plt.scatter(x_unique, z_unique, c='red', marker='x', s=50)
         # --- End 2D spline visualization ---
 
         for i, point in enumerate(target_points):
             plt.scatter(point[0], point[2], c='grey', marker='s', s=80)
             plt.text(point[0], point[2] + 0.05, f"Target {i+1}", color='black', fontsize=10, weight='bold')
+            if i+1 == tgt:
+                circle = plt.Circle((point[0], point[2]), 0.1, color='red', alpha=0.3)
+                plt.gca().add_patch(circle)
 
         plt.xlabel("X (meters)")
         plt.ylabel("Z (meters)")
@@ -205,6 +238,6 @@ for tgt in [1, 2, 3, 4]:
         handles, labels = plt.gca().get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
         plt.legend(by_label.values(), by_label.keys())
-        plt.title(f"Combined 2D Trace for Target {tgt} (Rainbow resets per trial)")
-        plt.savefig(f"global_trace_target_{tgt}_2d.png")
+        plt.title(f"Combined 2D Trace for Target {tgt} - {dog_id} {dog_name}")
+        plt.savefig(root_dir+f"global_trace_target_{tgt}_2d.png")
         plt.close()

@@ -20,9 +20,9 @@ def align_points_to_ground_plane(points, plane_normal):
     return rotation.apply(points)
 
 metadata_csv = 'PVP_Comprehension_Data.csv'
-threshold = 0.15
-smoothing_window = 3
-def process_distance_data(csv_path, start_time):
+threshold = 0.4
+smoothing_window = 5
+def process_distance_data(csv_path, start_time, end_time=None):
     dog_match = re.search(r'(BDL\d+)', csv_path)
     dog_id = dog_match.group(1) if dog_match else None
     trial_number = int(os.path.basename(os.path.dirname(csv_path)))
@@ -51,22 +51,33 @@ def process_distance_data(csv_path, start_time):
     below = smoothed < threshold
     drop_start = None
     drop_end = None
-
+    last_below_time = None
+    # Improved: Find the last continuous block below threshold
     for i in range(1, len(below)):
         if below.iloc[i] and not below.iloc[i - 1]:
             drop_start = df['time_sec'].iloc[i]
-        if drop_start and not below.iloc[i] and below.iloc[i - 1]:
-            drop_end = df['time_sec'].iloc[i]
-            break  # Stop at the first crossing up
-
-    if drop_start and drop_end:
-        end_time_auto = drop_end
+        if below.iloc[i]:
+            last_below_time = df['time_sec'].iloc[i]
+    # Set drop_end to last time below threshold (end of last continuous block)
+    if drop_start and last_below_time:
+        drop_end = last_below_time
     elif drop_start:
-        end_time_auto = df['time_sec'].iloc[-1]
+        drop_end = df['time_sec'].iloc[-1]
     else:
-        end_time_auto = df['time_sec'].max()
+        drop_end = df['time_sec'].max()
 
-    df = df[(df['time_sec'] >= start_time) & (df['time_sec'] <= end_time_auto)].copy()
+    print(f"Auto-trim Start: {start_time}, Auto-trim End: {drop_end}")
+
+    if end_time is None:
+        end_time = drop_end
+
+    df = df[(df['time_sec'] >= start_time) & (df['time_sec'] <= end_time)].copy()
+
+    # Remove outlier distances > 3.5 meters
+    distance_mask = (df[distance_cols] <= 3.5).all(axis=1)
+    df = df[distance_mask]
+
+
 
     # valid_search flag removed
     df['touched_target'] = 0
@@ -123,7 +134,7 @@ def plot_distance_data(csv_path, dog_name):
                                 textcoords="offset points", xytext=(0, 5), ha='center')
 
             # Rolling weighted average instead of spline
-            smoothed_avg = smoothed.rolling(window=3, min_periods=1).mean()
+            smoothed_avg = smoothed.rolling(window=smoothing_window, min_periods=1).mean()
 
             # Plot raw data dots again with lower alpha
             ax.plot(time_col[mask], smoothed[mask], 'o', color=ax.get_lines()[-1].get_color(), markersize=4, alpha=0.4)
@@ -216,26 +227,44 @@ def plot_trace(csv_path, dog_name, dog_id, trial_number = None, side_view = True
     ax = fig.add_subplot(111, projection='3d')
 
     # Prepare points and smooth with rolling window
-    x_smooth = pd.Series(x_aligned).rolling(window=3, min_periods=1).mean().values
-    y_smooth = pd.Series(y_aligned).rolling(window=3, min_periods=1).mean().values
-    z_smooth = pd.Series(z_aligned).rolling(window=3, min_periods=1).mean().values
-    
-    # Fit spline
+    x_smooth = pd.Series(x_aligned).rolling(window=smoothing_window, min_periods=1).mean().values
+    y_smooth = pd.Series(y_aligned).rolling(window=smoothing_window, min_periods=1).mean().values
+    z_smooth = pd.Series(z_aligned).rolling(window=smoothing_window, min_periods=1).mean().values
+
     from scipy.interpolate import splprep, splev
-    tck, u = splprep([x_smooth, z_smooth, y_smooth], s=0.5)
-    unew = np.linspace(0, 1.0, 300)
-    out = splev(unew, tck)
-
-    # Rainbow color along spline
     cmap = plt.cm.rainbow
-    for i in range(len(unew)-1):
-        color = cmap(unew[i])
-        ax.plot(out[0][i:i+2], out[1][i:i+2], out[2][i:i+2], color=color, linewidth=2)
+    # Remove invalid (nan) points for spline fitting
+    valid_3d = ~np.isnan(x_smooth) & ~np.isnan(y_smooth) & ~np.isnan(z_smooth)
+    x_smooth_valid = x_smooth[valid_3d]
+    y_smooth_valid = y_smooth[valid_3d]
+    z_smooth_valid = z_smooth[valid_3d]
+    num_points = len(x_smooth_valid)
+    # Sample a subset of valid points for spline fitting (minimum 5 or n//5)
+    if num_points >= 5:
+        sample_n = max(5, num_points // 5)
+        rng = np.random.default_rng(42)
+        idxs = np.linspace(0, num_points - 1, sample_n).astype(int)
+        xs_sample = x_smooth_valid[idxs]
+        ys_sample = y_smooth_valid[idxs]
+        zs_sample = z_smooth_valid[idxs]
+        spline_degree = min(3, len(xs_sample) - 1)
+        try:
+            tck, u = splprep([xs_sample, zs_sample, ys_sample], s=0.5, k=spline_degree)
+            unew = np.linspace(0, 1.0, 300)
+            out = splev(unew, tck)
+            # Rainbow color along spline
+            for i in range(len(unew)-1):
+                color = cmap(unew[i])
+                ax.plot(out[0][i:i+2], out[1][i:i+2], out[2][i:i+2], color=color, linewidth=2)
+        except Exception as e:
+            print(f"Skipping 3D spline fitting due to error: {e}")
+    else:
+        print("Not enough valid points for 3D spline fitting. Skipping spline.")
 
-    # Plot original data points as dots with colors
+    # Plot original data points as rainbow-colored dots
     colors = [cmap(u) for u in np.linspace(0, 1.0, len(x_aligned))]
-    for i in range(len(x_aligned)-1):
-        ax.plot(x_aligned[i:i+2], z_aligned[i:i+2], y_aligned[i:i+2], 'o', color=colors[i])
+    for i in range(len(x_aligned)):
+        ax.plot([x_aligned.iloc[i]], [z_aligned.iloc[i]], [y_aligned.iloc[i]], 'o', color=colors[i])
 
     # Plot target points as cubes (marker='s')
     ax.scatter(target_points[:, 0], target_points[:, 2], target_points[:, 1], c='grey', marker='s', s=100, label='Targets')
@@ -288,31 +317,33 @@ def plot_trace(csv_path, dog_name, dog_id, trial_number = None, side_view = True
     #######################
     fig2, ax2 = plt.subplots()
 
-    # Plot original data points as dots with colors
-    for i in range(len(x_aligned)-1):
-        ax2.plot(x_aligned[i:i+2], z_aligned[i:i+2], 'o', color=colors[i])
+    # Plot original data points as rainbow-colored dots
+    for i in range(len(x_aligned)):
+        ax2.plot([x_aligned.iloc[i]], [z_aligned.iloc[i]], 'o', color=colors[i])
 
     # Remove NaNs before fitting
     valid_2d = ~np.isnan(x_smooth) & ~np.isnan(z_smooth)
     x_smooth_2d = x_smooth[valid_2d]
     z_smooth_2d = z_smooth[valid_2d]
-
-    if len(x_smooth_2d) >= 3 and len(np.unique(x_smooth_2d)) >= 2 and len(np.unique(z_smooth_2d)) >= 2:
+    num_points_2d = len(x_smooth_2d)
+    # Sample a subset of valid points for spline fitting (minimum 5 or n//5)
+    if num_points_2d >= 5:
+        sample_n_2d = max(5, num_points_2d // 5)
+        idxs_2d = np.linspace(0, num_points_2d - 1, sample_n_2d).astype(int)
+        xs2d_sample = x_smooth_2d[idxs_2d]
+        zs2d_sample = z_smooth_2d[idxs_2d]
+        spline_degree_2d = min(3, len(xs2d_sample) - 1)
         try:
-            tck_2d, u_2d = splprep([x_smooth_2d, z_smooth_2d], s=0.5)
+            tck_2d, u_2d = splprep([xs2d_sample, zs2d_sample], s=0.5, k=spline_degree_2d)
             unew_2d = np.linspace(0, 1.0, 300)
             out_2d = splev(unew_2d, tck_2d)
             for i in range(len(unew_2d)-1):
                 color = cmap(unew_2d[i])
                 ax2.plot(out_2d[0][i:i+2], out_2d[1][i:i+2], color=color, linewidth=2)
         except Exception as e:
-            print(f"Skipping 2D spline fitting due to error: {e}")
+            print(f"Skipping 2D spline fitting due to error: {e!r}")
     else:
-        print("Not enough unique valid points for spline fitting in 2D. Skipping spline.")
-
-    # Plot original data points as dots with colors on top of spline
-    for i in range(len(x_aligned)-1):
-        ax2.plot(x_aligned[i:i+2], z_aligned[i:i+2], 'o', color=colors[i])
+        print("Not enough valid points for 2D spline fitting. Skipping spline.")
 
     # Add target points
     ax2.scatter(target_points[:, 0], target_points[:, 2], c='grey', marker='s', s=100, label='Targets')
@@ -343,11 +374,14 @@ def plot_trace(csv_path, dog_name, dog_id, trial_number = None, side_view = True
     ax2.legend()
     ax2.set_xlabel('X (meters)')
     ax2.set_ylabel('Z (meters)')
+    ax2.set_xlim([-2, 1])
+    ax2.set_ylim([0.5,3.5])
     ax2.set_title(f"2D Trace (Top View) - {dog_name}")
     ax2.grid(True)
 
     fig2.tight_layout()
     plot_path_2d = csv_path.replace("_table_with_metadata.csv", "_trace2d.png")
+    
     plt.savefig(plot_path_2d)
     plt.close()
     print(f"2D trace plot with aligned coordinates saved: {plot_path_2d}")
@@ -355,20 +389,23 @@ def plot_trace(csv_path, dog_name, dog_id, trial_number = None, side_view = True
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    trial_number = 1
-    start_time = 3
-    parser.add_argument("--csv", type=str, default = f'dog_data/BDL204_Waffles-CAM2/{trial_number}/processed_dog_result_table.csv', help="Path to the processed dog CSV file")
+    dog_name = 'Josi'
+    dog_id = 'BDL251'
+    trial_number = 10
+    start_time = 1
+    end_time = None
+    parser.add_argument("--csv", type=str, default = f'dog_data/{dog_id}_{dog_name}_side/{trial_number}/processed_dog_result_table.csv', help="Path to the processed dog CSV file")
     parser.add_argument("--start", type=float, default=start_time, help="Start time in seconds")
+    parser.add_argument("--end", type=float, default=end_time, help="Start time in seconds")
     parser.add_argument("--side_view", action="store_true", help="Use side view to select config JSON")
     args = parser.parse_args()
 
     csv_path = args.csv
 
     # First process the data to generate the valid_search column and trim time window
-    # updated_csv_path, dog_id, dog_name, trial_number, target_location = process_distance_data(csv_path, start_time=args.start)
-    dog_name = 'Waffles'
-    dog_id = 'BDL204'
-    updated_csv_path = f'dog_data/BDL204_Waffles-CAM2/{trial_number}/processed_dog_result_table_with_metadata.csv'
+    updated_csv_path, dog_id, dog_name, trial_number, target_location = process_distance_data(csv_path, start_time=args.start, end_time = end_time)
+
+    updated_csv_path = f'dog_data/{dog_id}_{dog_name}_side/{trial_number}/processed_dog_result_table_with_metadata.csv'
     # Then plot the processed data
     plot_distance_data(updated_csv_path, dog_name)
     plot_trace(updated_csv_path, dog_name, dog_id, trial_number, side_view=True)

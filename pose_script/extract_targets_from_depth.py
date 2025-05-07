@@ -272,34 +272,34 @@ def fit_and_plot_plane_from_targets(results_json, save_path="plane_visualization
     print(f"Saved plane visualization to {save_path}")
 
 if __name__ == "__main__":
-    color_image_path = "dog_data/BDL204_Waffle/1/Color/_Color_1423.png"
-    raw_depth_path = "dog_data/BDL204_Waffle/1/Depth_Color/_Depth_Color_1423.raw"
-    color_depth_path = "dog_data/BDL204_Waffle/1/Depth/_Depth_1423.png"
-    output_json = "target_coords_front.json"
-    ros_bag_path = "dog_data/BDL204_Waffle/BDL204_Waffles_PVP_01.bag"
-    intr = find_realsense_intrinsics(ros_bag_path)
-    # RealSense intrinsics
-    intrinsics = {
-        "fx": intr.fx,
-        "fy": intr.fy,
-        "cx": intr.ppx,
-        "cy": intr.ppy
-    }
+    # color_image_path = "dog_data/BDL205_Indie_front/1/Color/_Color_1807.png"
+    # raw_depth_path = "dog_data/BDL205_Indie_front/1/Depth_Color/_Depth_Color_1807.raw"
+    # color_depth_path = "dog_data/BDL205_Indie_front/1/_Depth_1807.png"
+    # output_json = "target_coords_front.json"
+    # ros_bag_path = "dog_data/BDL205_Indie_front/BDL205_Indie_PVP_02.bag"
+    # intr = find_realsense_intrinsics(ros_bag_path)
+    # # RealSense intrinsics
+    # intrinsics = {
+    #     "fx": intr.fx,
+    #     "fy": intr.fy,
+    #     "cx": intr.ppx,
+    #     "cy": intr.ppy
+    # }
 
-    bboxes = select_bounding_boxes(color_image_path, color_depth_path)
-    print(f"Selected {len(bboxes)} bounding boxes.")
+    # bboxes = select_bounding_boxes(color_image_path, color_depth_path)
+    # print(f"Selected {len(bboxes)} bounding boxes.")
 
-    analyze_bboxes(color_image_path, raw_depth_path, bboxes, intrinsics, output_json)
-    depth_img = load_raw_depth(raw_depth_path, shape=(720, 1280))
-    estimate_human_center_mediapipe(color_image_path, depth_img, intrinsics, output_json)
-    visualize_3d_targets(output_json)
+    # analyze_bboxes(color_image_path, raw_depth_path, bboxes, intrinsics, output_json)
+    # depth_img = load_raw_depth(raw_depth_path, shape=(720, 1280))
+    # estimate_human_center_mediapipe(color_image_path, depth_img, intrinsics, output_json)
+    # visualize_3d_targets(output_json)
 
     # === User Input ===
-    color_image_path = "dog_data/BDL204_WAFFLES-CAM2/1/Color/_Color_1147.png"
-    raw_depth_path = "dog_data/BDL204_WAFFLES-CAM2/1/Depth_Color/_Depth_Color_1147.raw"
-    color_depth_path = "dog_data/BDL204_WAFFLES-CAM2/1/Depth/_Depth_1147.png"
+    color_image_path = "dog_data/BDL212_Milton_side/2/Color/_Color_0641.png"
+    raw_depth_path = "dog_data/BDL212_Milton_side/2/Depth_Color/_Depth_Color_0641.raw"
+    color_depth_path = "dog_data/BDL212_Milton_side/2/Depth/_Depth_0641.png"
     output_json = "target_coords_side.json"
-    ros_bag_path = "dog_data/BDL204_WAFFLES-CAM2/BDL204_Waffles_PVP_01_Cam2.bag"
+    ros_bag_path = "dog_data/BDL212_Milton_side/BDL212_Milton_PVP_021_Cam2.bag"
     intr = find_realsense_intrinsics(ros_bag_path)
     # RealSense intrinsics
     intrinsics = {

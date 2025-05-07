@@ -149,7 +149,7 @@ def prepare_video_and_json(output_dir, json_path, side_view):
         depth_files = sorted([f for f in os.listdir(depth_video_path) if f.endswith(".raw")])
         first_img = cv2.imread(os.path.join(video_path, color_files[0]))
         height, width = first_img.shape[:2]
-        fps = 12  # default fps for image sequence
+        fps=30
         cap = depth_cap = None
         # Extract starting frame index from first filename
         if color_files:
@@ -174,7 +174,7 @@ def select_valid_candidates(bboxes, bodyparts, confidences, width, height, side_
         aspect_ratio = h / w if w > 0 else 0
 
         if side_view:
-            if  y_center < 0.4 * height:
+            if  y_center < 0.3 * height:
                 continue
         else:
             if aspect_ratio > 2.0 or y < height // 2 or confidence < 0.98 or (x_center > 0.5 * width and y_center > 0.8 * height):
@@ -639,7 +639,17 @@ def pose_visualize(json_path, side_view = False):
 
     intr, targets, output_dir = load_intrinsics_and_targets(json_path, side_view)
     (cap, depth_cap, out, width, height, fps, use_image_folder, color_files, depth_files, video_path, depth_video_path, output_json_path, json_data, start_frame_idx) = prepare_video_and_json(output_dir, json_path, side_view)
-    
+
+    # --- Resample JSON to match number of image frames if needed ---
+    if use_image_folder:
+        num_images = len(color_files)
+        num_json = len(json_data)
+        if num_json != num_images:
+            import numpy as np
+            print(f"Resampling JSON data: {num_json} entries → {num_images} frames")
+            indices = np.linspace(0, num_json - 1, num=num_images).astype(int)
+            json_data = [json_data[i] for i in indices]
+
     transform_matrix = load_side_to_front_transform() if side_view else np.eye(4)
 
     SELECTED_NAMES = {
@@ -697,6 +707,7 @@ def pose_visualize(json_path, side_view = False):
             frame = cv2.imread(os.path.join(video_path, color_files[frame_idx]))
             raw_path = os.path.join(depth_video_path, depth_files[frame_idx])
             with open(raw_path, 'rb') as f:
+                import numpy as np
                 raw = np.frombuffer(f.read(), dtype=np.uint16).reshape((height, width))
                 depth_frame = raw / 1000
             ret = True

@@ -86,11 +86,11 @@ def run_rs_convert(bag_filepath, output_prefix, start_sec = 0, end_sec = 10000):
 
             color_filename = os.path.join(color_dir, f"_Color_{frame_idx:04}.png")
             cv2.imwrite(color_filename,  cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB))
-            color_image.tofile(os.path.join(color_dir, f"_Color_{frame_idx:04}.raw"))
+            # color_image.tofile(os.path.join(color_dir, f"_Color_{frame_idx:04}.raw"))
 
             depth_filename = os.path.join(depth_dir, f"_Depth_{frame_idx:04}.png")
             cv2.imwrite(depth_filename, cv2.cvtColor(depth_image, cv2.COLOR_BGR2RGB))
-            depth_image.tofile(os.path.join(depth_dir, f"_Depth_{frame_idx:04}.raw"))
+            # depth_image.tofile(os.path.join(depth_dir, f"_Depth_{frame_idx:04}.raw"))
 
             print(f" Saved frame {frame_idx} -> Time{frame_idx/recorded_fps/2/60} min")
             frame_idx += 1
