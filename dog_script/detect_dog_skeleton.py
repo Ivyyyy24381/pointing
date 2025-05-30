@@ -12,6 +12,9 @@ def detect_dog(video_path):
                                             model_type,
                                             model_name="hrnet_w32",
                                             detector_name="fasterrcnn_resnet50_fpn_v2",
+                                            max_individuals = 1, 
+                                            plot_trajectories=True,
+                                            batch_size = 4, 
                                             video_adapt = False)    # === Analyze Video ===
     
 # video_path = '~/Desktop/dog_data/BDL204_Waffle/2/Color.mp4'

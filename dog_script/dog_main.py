@@ -2,6 +2,8 @@ from detect_dog_skeleton import detect_dog
 from dog_pose_visualize import pose_visualize
 import os
 import argparse
+import matplotlib
+matplotlib.use('Agg')
 
 def process_dog(folder_path, side_view=False):
     for folder_name in sorted(os.listdir(folder_path)):
@@ -22,7 +24,7 @@ def process_dog(folder_path, side_view=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root_path", type=str, default='dog_data/BDL251_Josi_side/', help="Path to the root dog video dataset directory")
+    parser.add_argument("--root_path", type=str, default='dog_data/BDL244_Hannah_side/', help="Path to the root dog video dataset directory")
     parser.add_argument("--side_view", action='store_true', help="Flag to indicate if this is the side view")
     args = parser.parse_args()
     # process_dog(os.path.expanduser(args.root_path), side_view=args.side_view)

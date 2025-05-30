@@ -19,7 +19,16 @@ import pandas as pd
 # === Paths ===
 
 import pyrealsense2 as rs
-
+def interpolate_trace(trace_3d):
+    trace_array = np.array(trace_3d, dtype=np.float32)
+    for dim in range(3):
+        col = trace_array[:, dim]
+        nans = np.isnan(col)
+        not_nans = ~nans
+        if np.sum(not_nans) >= 2:
+            col[nans] = np.interp(np.flatnonzero(nans), np.flatnonzero(not_nans), col[not_nans])
+        trace_array[:, dim] = col
+    return trace_array.tolist()
 def get_valid_depth(depth_frame, u, v, patch_size=5):
     """
     Robustly extract depth at (u, v) by sampling a local patch.
@@ -851,6 +860,7 @@ def pose_visualize(json_path, side_view = False):
             per_frame_target_metrics.append(frame_target_metrics)
         else:
             # Append empty dictionary to maintain alignment for plotting and CSV
+            trace_3d.append([np.nan, np.nan, np.nan])
             frame_target_metrics = {}
             per_frame_target_metrics.append({})
                 
@@ -880,7 +890,9 @@ def pose_visualize(json_path, side_view = False):
     out.release()
     cv2.destroyAllWindows()
     print(f"FRAME INDEX TOTAL LENGTH ------------> {frame_idx}")
+    
     processed_json = interpolate_missing_frames(processed_json)
+    trace_3d = interpolate_trace(trace_3d)
     # Reassign interpolated target_metrics back to processed_json
     for i in range(len(processed_json)):
         if i < len(per_frame_target_metrics):

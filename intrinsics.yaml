@@ -1,0 +1,18 @@
+--front camera--
+Width: 1280
+Height: 720
+PPX (cx): 643.2044677734375
+PPY (cy): 372.8826599121094
+FX: 921.7815551757812
+FY: 921.6910400390625
+Distortion Model: distortion.inverse_brown_conrady
+Coefficients: [0.0, 0.0, 0.0, 0.0, 0.0]
+--side camera--
+Width: 1280
+Height: 720
+PPX (cx): 641.45458984375
+PPY (cy): 359.393798828125
+FX: 643.2109985351562
+FY: 642.4398803710938
+Distortion Model: distortion.inverse_brown_conrady
+Coefficients: [-0.05676564201712608, 0.06551581621170044, 0.00036026633461005986, 0.0010946334805339575, -0.020970700308680534]

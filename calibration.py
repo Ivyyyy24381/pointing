@@ -133,11 +133,11 @@ def calibrate_side_to_front(from_json_path, to_json_path, save_path):
     print(f"Saved side-to-front transform to {save_path}")
 
 print("--front camera--") 
-rosbag_front_path = "dog_data/BDL204_Waffle/BDL204_Waffles_PVP_01.bag"
+rosbag_front_path = "dog_data/BDL226_Taro_front/BDL232_Taro_PVP_14.bag"
 
 front_intrinsics = find_realsense_intrinsics(rosbag_front_path)
 print("--side camera--")
-rosbag_side_path = "dog_data/BDL204_WAFFLES-CAM2/BDL204_Waffles_PVP_01_Cam2.bag"
+rosbag_side_path = "dog_data/BDL225_Taro_side/BDL232_Taro_PVP_14_Cam2.bag"
 side_intrinsics = find_realsense_intrinsics(rosbag_side_path)
 
 front_targets_json_path = "target_coords_front.json"
