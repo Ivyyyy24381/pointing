@@ -85,7 +85,7 @@ def align_points_to_ground_plane(points, plane_normal):
     return rotation.apply(points)
 
 metadata_csv = 'PVP_Comprehension_Data.csv'
-threshold = .3
+threshold = .35
 smoothing_window = 3
 def process_distance_data(csv_path, start_time, end_time=None):
     dog_match = re.search(r'(BDL\d+)', csv_path)
@@ -455,11 +455,11 @@ def plot_trace(csv_path, dog_name, dog_id, trial_number = None, side_view = True
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    dog_name = 'Hannah'
-    dog_id = 'BDL244'
+    dog_name = 'Kenzi'
+    dog_id = 'BDL127'
     trial_number = 10
-    start_time = 0
-    end_time = .9
+    start_time = 3
+    end_time = 4.5
     parser.add_argument("--csv", type=str, default = f'dog_data/{dog_id}_{dog_name}_side/{trial_number}/processed_dog_result_table.csv', help="Path to the processed dog CSV file")
     parser.add_argument("--start", type=float, default=start_time, help="Start time in seconds")
     parser.add_argument("--end", type=float, default=end_time, help="Start time in seconds")

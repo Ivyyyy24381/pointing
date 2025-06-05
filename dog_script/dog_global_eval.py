@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d import art3d
 import json
 import re
 
-root_dir = "dog_data/BDL244_Hannah_side/"
+root_dir = "dog_data/BDL127_Kenzi_side/"
 dog_match = re.search(r'(BDL\d+)', root_dir)
 dog_id = dog_match.group(1) if dog_match else None
 metadata_csv = 'PVP_Comprehension_Data.csv'
