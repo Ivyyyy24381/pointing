@@ -20,3 +20,4 @@ code/__pycache__/batch_split_bag.cpython-312.pyc
 .DS_Store
 visualize/__pycache__/gesture_util.cpython-312.pyc
 *.pyc
+.DS_Store

@@ -11,10 +11,14 @@ git clone --branch puppy-lab --single-branch git@github.com:Ivyyyy24381/pointing
 conda create -n point_production python=3.12
 conda activate point_production
 
+pip install -r requirements.txt
+conda install --yes --file conda_requirements.txt $ or run this if using conda
 ```
 
 ### folder structure
 for each trial, the folder should contain:
+```
+
 trial_folder/
 ├── Color/
 │   └── ... (individual color frames, likely extracted)
@@ -28,21 +32,28 @@ trial_folder/
 ├── gesture_data.csv                    # output from gesture detection
 ├── output.mp4                          # visualization of results
 
+```
+
 if the a specific trial is missing gesture_data.csv, go to step 0:
 ### Optional step 0(run if a trial is missing gesture_data.csv)
 python batch_point_production.py
 
 ### step 1: 
+```
 python GUI/skeleton_gui.py
 - load the Color.mp4 video in a trial
 - trim the valid pointing frames
 - click process selection to get the pointing data
+```
 
-Output:
+```Output:
 ├── 2d_pointing_trace.png
 ├── fig/
 │   └── ... (figures or plots)
-├── processed_gesture_data.csv
+├── processed_gesture_data.csv```
+
+
+
 
 **Command:**
 
