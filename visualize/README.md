@@ -36,7 +36,13 @@ trial_folder/
 
 if the a specific trial is missing gesture_data.csv, go to step 0:
 ### step 0 [Optional]：(run if a trial is missing gesture_data.csv)
+```
 python batch_point_production.py
+Example input:
+- base path: /Users/ivy/Library/CloudStorage/GoogleDrive-xiao_he@brown.edu/Shared drives/pointing_production/
+- subject folder: BDL202_Dee-Dee_front (if leave blank, process all subjects all trials)
+- trial number: 2 (if leave blank, process all trials for designated subject)
+```
 
 ### step 1: 
 ```
