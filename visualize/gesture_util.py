@@ -301,28 +301,8 @@ def calculate_forward_extension(shoulder_rest_3d, elbow_rest_3d, wrist_rest_3d,
     # Calculate the z-depth (forward extension component) for elbow and wrist
     elbow_depth = calculate_depth_from_2d(upper_arm_length_3d, upper_arm_length_2d)
     wrist_depth = calculate_depth_from_2d(lower_arm_length_3d, lower_arm_length_2d)
-    print("elbow_depth:", elbow_depth)
-    print("wrist_depth:", wrist_depth)
     # Calculate forward extension as the difference in the z-axis (depth) from rest
     forward_extension = wrist_depth - wrist_rest_3d[2]
 
     return forward_extension
 
-# Example data
-
-# 3D resting positions (shoulder, elbow, and wrist) when arm is at rest
-shoulder_rest_3d = (0, 0, 0)
-elbow_rest_3d = (0, -0.3, 0)
-wrist_rest_3d = (0, -0.6, 0)
-
-# 2D projection data after arm extension (shoulder, elbow, and wrist)
-shoulder_2d = (0, 0)
-elbow_2d = (0.1, -0.2)
-wrist_2d = (0.1, -0.4)
-
-# Calculate forward extension
-forward_extension = calculate_forward_extension(shoulder_rest_3d, elbow_rest_3d, wrist_rest_3d,
-                                                shoulder_2d, elbow_2d, wrist_2d)
-
-# Output the forward extension result
-print(f"Forward extension of the arm: {forward_extension:.2f} units")
