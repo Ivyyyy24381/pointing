@@ -35,22 +35,24 @@ trial_folder/
 ```
 
 if the a specific trial is missing gesture_data.csv, go to step 0:
-### Optional step 0(run if a trial is missing gesture_data.csv)
+### step 0 [Optional]：(run if a trial is missing gesture_data.csv)
 python batch_point_production.py
 
 ### step 1: 
 ```
 python GUI/skeleton_gui.py
+```
 - load the Color.mp4 video in a trial
 - trim the valid pointing frames
 - click process selection to get the pointing data
-```
 
-```Output:
+Output will produce the following files:
+```
 ├── 2d_pointing_trace.png
 ├── fig/
 │   └── ... (figures or plots)
-├── processed_gesture_data.csv```
+├── processed_gesture_data.csv
+```
 
 
 
