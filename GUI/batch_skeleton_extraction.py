@@ -19,6 +19,7 @@ if not os.path.exists(root_path):
     print(f"Root path {root_path} does not exist.")
     sys.exit(1) 
 root_data_path = os.path.join(root_path, 'overeall_processed_gesture.csv')
+if os.path.exists(root_data_path):
     os.remove(root_data_path)
 dog_data = []
 for dog_folder in os.listdir(root_path):
