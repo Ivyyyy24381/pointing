@@ -1,316 +1,195 @@
+from tqdm import tqdm
 import cv2
-import numpy as np
 import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox
-from PIL import Image, ImageTk
-import threading
-import time
+from tkinter import filedialog
+from tkinter import messagebox
+import yaml
+import os 
+import pandas as pd
 import sys
-sys.path.append('visualize/')
+sys.path.append('./')  
+sys.path.append('visualize')# Adjust this path based on your project structure
+from gesture_data_process import GestureDataProcessor
 from gesture_detection import PointingGestureDetector
-import mediapipe as mp
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
-from skspatial.objects import Plane, Line
-from gesture_util import *
-import cv2
-import numpy as np
+class VideoTrimmerGUI:
+    INTRINSICS_PATH = "config/camera_config.yaml"
+    TARGETS_PATH = "config/targets.yaml"
+    INTRINSICS = yaml.safe_load(open(INTRINSICS_PATH, 'r'))
+    TARGETS = yaml.safe_load(open(TARGETS_PATH, 'r'))
+    def process_selection(self):
+        print(f"Processing video: {self.video_path}")
+        print(f"Start frame: {self.start_frame}")
+        print(f"End frame: {self.end_frame}")
 
-def match_fov(image, hfov_wide=87, hfov_narrow=69, vfov_wide=58, vfov_narrow=42):
-    h_crop_ratio = np.tan(np.deg2rad(hfov_narrow / 2)) / np.tan(np.deg2rad(hfov_wide / 2))
-    v_crop_ratio = np.tan(np.deg2rad(vfov_narrow / 2)) / np.tan(np.deg2rad(vfov_wide / 2))
+        import shutil
+        from tqdm import tqdm
+        import os
 
-    height, width = image.shape[:2]
-    new_width = int(width * h_crop_ratio)
-    new_height = int(height * v_crop_ratio)
-    start_x = (width - new_width) // 2
-    start_y = (height - new_height) // 2
-    cropped_image = image[start_y:start_y + new_height, start_x:start_x + new_width]
-    cropped_image = cv2.resize(cropped_image, (width, height))
-    return cropped_image
+        root_path = self.video_path.rsplit('/', 1)[0]
+        color_video_path = os.path.join(root_path, 'Color.mp4')
+        data_path = os.path.join(root_path, "gesture_data.csv")
+        if not os.path.exists(data_path):
+            gesture_processor = PointingGestureDetector().run_video(color_video_path)
+            
+        Gesture_data_processor = GestureDataProcessor(data_path)
+        trimmed_data = Gesture_data_processor.trim_data(Gesture_data_processor, start_frame=self.start_frame, end_frame=self.end_frame)
 
-class VideoPlayerGUI:
+        # Remove existing processed_gesture_data.csv before processing (if needed)
+        processed_csv_path = os.path.join(root_path, "processed_gesture_data.csv")
+        if os.path.exists(processed_csv_path):
+            os.remove(processed_csv_path)
+
+        Gesture_data_processor.process_data(trimmed_data)
+        tqdm.write(f"✅ Processed trimmed data saved to {root_path}/processed_gesture_data.csv")
+
+        # Reset video and proceed to next
+        if hasattr(self, "video_batch") and hasattr(self, "batch_index"):
+            self.cap.release()
+            self.canvas.delete("all")
+            self.batch_index += 1
+            if self.batch_index < len(self.video_batch):
+                self.load_video_path(self.video_batch[self.batch_index])
+            else:
+                tqdm.write("🎉 All videos processed.")
+                self.root.quit()
+        else:
+            if self.progress:
+                self.progress.update(1)
+            self.next_video()
     def __init__(self, root):
         self.root = root
-        self.root.title("Video Player with 3D Skeleton Visualization")
+        self.root.title("Video Trimmer")
 
-        self.cap = None
-        self.frame_count = 0
-        self.current_frame = 0
-        self.is_playing = False
         self.video_path = None
-        self.downscale_factor = 0.5
+        self.cap = None
+        self.frame_pos = 0
+        self.total_frames = 0
+        self.start_frame = 0
+        self.end_frame = 0
+        self.video_queue = []
+        self.progress = None
 
-        self.target_locations = []  # List to store target locations
-        self.ground_plane = None
-        # Create GUI components
-        self.load_button = tk.Button(root, text="Load Video", command=self.load_video)
-        self.load_button.pack()
+        self.canvas = tk.Canvas(root, width=640, height=480, highlightthickness=2)
+        self.canvas.pack()
 
-        self.video_canvas = tk.Canvas(root, bg="black", width=400, height=300)
-        self.video_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.load_btn = tk.Button(root, text="Load Video", command=self.load_video)
+        self.load_btn.pack()
 
-        self.slider = tk.Scale(root, from_=0, to=100, orient="horizontal", command=self.update_frame, label="Frame")
-        self.slider.pack(fill="x")
+        self.frame_slider = tk.Scale(root, from_=0, to=0, orient=tk.HORIZONTAL, label="Frame", command=self.update_frame, length=800)
+        self.frame_slider.pack()
 
-        self.play_button = tk.Button(root, text="Play", command=self.play_video)
-        self.play_button.pack()
+        self.mark_start_btn = tk.Button(root, text="Mark Start", command=self.mark_start_frame)
+        self.mark_start_btn.pack()
 
-        self.stop_button = tk.Button(root, text="Stop", command=self.stop_video)
-        self.stop_button.pack()
+        self.mark_end_btn = tk.Button(root, text="Mark End", command=self.mark_end_frame)
+        self.mark_end_btn.pack()
+        self.process_btn = tk.Button(root, text="Process Selection", command=self.process_selection)
+        self.process_btn.pack()
 
-        # Add target management buttons
-        self.add_target_button = tk.Button(root, text="Add Target", command=self.add_target)
-        self.add_target_button.pack()
+        self.root.bind("<Right>", self.next_frame)
+        self.root.bind("<Left>", self.prev_frame)
 
-        self.remove_target_button = tk.Button(root, text="Remove Target", command=self.remove_target)
-        self.remove_target_button.pack()
+    def set_video_queue(self, video_list):
+        self.video_queue = video_list
+        if self.video_queue:
+            self.progress = tqdm(total=len(self.video_queue), desc="Processing Videos")
+            self.load_video_path(self.video_queue.pop(0))
 
-        # Matplotlib figure for 3D skeleton visualization
-        self.handedness = ""
-        self.fig = plt.Figure(figsize=(5, 5), dpi=100)
-        self.ax = self.fig.add_subplot(111, projection='3d')
-        self.canvas_3d = FigureCanvasTkAgg(self.fig, master=root)
-        self.canvas_3d.draw()
-        self.canvas_3d.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        self.gesture_detector = PointingGestureDetector()
-        self.root.bind("<Configure>", self.resize_window)
-
-    def load_video(self):
-        self.video_path = filedialog.askopenfilename(title="Select Video File")
+    def next_video(self):
+        if self.video_queue:
+            next_path = self.video_queue.pop(0)
+            self.load_video_path(next_path)
+        else:
+            if self.progress:
+                self.progress.close()
+            self.root.quit()
+    
+    def load_video(self, video_path=None):
+        if video_path:
+            self.video_path = video_path
+        else:
+            self.video_path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4"), ("All files", "*.*")])
         if not self.video_path:
             return
-
         self.cap = cv2.VideoCapture(self.video_path)
-        self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.slider.config(to=self.frame_count - 1)
-        self.display_frame(0)
+        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.frame_pos = 0
+        self.start_frame = 0
+        self.end_frame = self.total_frames - 1
+        self.frame_slider.config(to=self.total_frames - 1)
+        self.frame_slider.set(0)
+        self.show_frame()
 
-    def display_frame(self, frame_idx):
-        if not self.cap:
-            return
-
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = self.cap.read()
-
-        if ret:
-            height, width, _ = frame.shape
-            color_orig = frame[0:int(height // 2), :, :]
-            depth_orig = frame[int(height // 2):height, :, :]
-            depth_orig = match_fov(depth_orig)
-
-            # Process the video frame
-            color_draw = self.gesture_detector.process_frame(color_orig)
-            pose_results = self.gesture_detector.pose.process(color_orig)
-            # draw landmark on depth image (do not delete)
-            mp.solutions.drawing_utils.draw_landmarks(depth_orig, pose_results.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
-            landmarks_2d = pose_results.pose_landmarks
-            if self.gesture_detector.pointing_hand_handedness != "":
-                vectors_2d = self.gesture_detector.find_vectors(self.gesture_detector.pointing_hand_handedness, landmarks_2d)
-                joints_2d = self.gesture_detector.find_joint_locations(self.gesture_detector.pointing_hand_handedness, landmarks_2d)
-                self.gesture_detector.display_visualization(depth_orig, joints_2d, vectors_2d)
-                
-            if pose_results.pose_landmarks:
-                landmarks = np.array([[lm.x, lm.y, lm.z] for lm in pose_results.pose_world_landmarks.landmark])
-                vectors = self.gesture_detector.find_vectors( self.gesture_detector.pointing_hand_handedness,pose_results.pose_world_landmarks)
-                joints = self.gesture_detector.find_joint_locations(self.gesture_detector.pointing_hand_handedness, pose_results.pose_world_landmarks)
-                wrist_location = joints['wrist']
-
-                # Evaluate pointing gestures in real-time
-                eval_result = self.evaluate_gestures_live(self.ground_plane, wrist_location, vectors)
-
-                # Update the 3D skeleton plot
-                self.update_skeleton_3d(pose_results.pose_world_landmarks, eval_result['vector_intersections'], eval_result['closest_target'])
-
-            color_frame = self.downscale_frame(color_orig, self.downscale_factor)
-            depth_frame = self.downscale_frame(depth_orig, self.downscale_factor)
-
-            stacked_frame = np.vstack((color_frame, depth_frame))
-
-            canvas_width = self.video_canvas.winfo_width()
-            canvas_height = self.video_canvas.winfo_height()
-
-            resized_frame = self.resize_frame(stacked_frame, canvas_width, canvas_height)
-
-            img = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(img)
-            img_tk = ImageTk.PhotoImage(image=img)
-
-            self.video_canvas.create_image(0, 0, anchor=tk.NW, image=img_tk)
-            self.video_canvas.image = img_tk
-            self.slider.set(frame_idx)
-
-    def downscale_frame(self, frame, scale_factor):
-        height, width = frame.shape[:2]
-        new_width = int(width * scale_factor)
-        new_height = int(height * scale_factor)
-        return cv2.resize(frame, (new_width, new_height))
-
-    def evaluate_gestures_live(self, ground_plane, wrist_location, vectors):
-        """
-        Evaluate pointing gestures for a single frame and calculate distances and intersections.
-        # """
-        # ground_plane = Plane(point=[0, 0, 0], normal=[0, 1, 0])
-        min_distance = float('inf')
-        closest_target = None
-        vector_intersections = {}
-        if ground_plane is None:
-            return {
-            'closest_target': closest_target,
-            'min_distance': min_distance,
-            'vector_intersections': vector_intersections
-        }
-        for name, vec in vectors.items():
-            if name == "wrist_to_index":
-                continue
-            direction = vec
-            if direction is None:
-                continue
-            origin = [wrist_location.x, wrist_location.y, wrist_location.z]
-            line = Line(point=origin, direction=direction)
-            intersection = ground_plane.intersect_line(line)
-
-            if intersection is not None:
-                vector_intersections[name] = intersection
-                    
-        for target in self.target_locations:
-            transformed_target_location = np.array(target)
-            
-            for name, vec in vectors.items():
-                direction = vec
-                if direction is None:
-                    continue
-                origin = [wrist_location.x, wrist_location.y, wrist_location.z]
-                line = Line(point=origin, direction=direction)
-                intersection = ground_plane.intersect_line(line)
-
-                if intersection is not None:
-                    vector_intersections[name] = intersection
-                    distance_to_target = np.linalg.norm(intersection - transformed_target_location)
-                    if distance_to_target < min_distance:
-                        min_distance = distance_to_target
-                        closest_target = target
-
-        return {
-            'closest_target': closest_target,
-            'min_distance': min_distance,
-            'vector_intersections': vector_intersections
-        }
-
-    def update_skeleton_3d(self, pose_landmarks, vector_intersections, closest_target):
-        self.ax.cla()
-
-        # Plot skeleton landmarks
-        x = [lm.x for lm in pose_landmarks.landmark]
-        y = [lm.y for lm in pose_landmarks.landmark]
-        z = [lm.z for lm in pose_landmarks.landmark]
-
-        self.ax.scatter(x, y, z, c='blue', label='Landmarks', s=50)
-        mp_pose = mp.solutions.pose
-        connections = [
-        (mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.LEFT_KNEE),
-        (mp_pose.PoseLandmark.LEFT_KNEE, mp_pose.PoseLandmark.LEFT_HIP),
-        (mp_pose.PoseLandmark.RIGHT_ANKLE, mp_pose.PoseLandmark.RIGHT_KNEE),
-        (mp_pose.PoseLandmark.RIGHT_KNEE, mp_pose.PoseLandmark.RIGHT_HIP),
-        (mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.RIGHT_HIP),
-        (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER),
-        (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_ELBOW),
-        (mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_ELBOW),
-        (mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.LEFT_WRIST),
-        (mp_pose.PoseLandmark.RIGHT_ELBOW, mp_pose.PoseLandmark.RIGHT_WRIST)
-        ]
-    
-        if self.gesture_detector.pointing_hand_handedness is 'Left':
-            i = mp_pose.PoseLandmark.LEFT_WRIST
-        else:
-            i = mp_pose.PoseLandmark.RIGHT_WRIST
-            
-        for conn in connections:
-            self.ax.plot([x[conn[0]], x[conn[1]]],
-                         [y[conn[0]], y[conn[1]]],
-                         [z[conn[0]], z[conn[1]]], c='b')
-
-        # Plot ground plane
-        self.ground_plane = find_ground_plane(pose_landmarks.landmark)
-        self.ground_plane.plot_3d(self.ax, alpha=0.2)
-
-        # Plot vector-ground intersections
-        for name, intersection in vector_intersections.items():
-            self.ax.scatter(intersection[0], intersection[1], intersection[2],  marker='o', label=f'{name} intersection')
-            self.ax.plot([x[i], intersection[0]], [y[i], intersection[1]], [z[i], intersection[2]], color='yellow', linestyle='-')
-            
-            
-        # Plot pointing vectors and targets
-        for target in self.target_locations:
-            self.ax.scatter(target[0], target[1], target[2], c='red', s=100, label='Target', alpha=0.9)
-            self.ax.plot([x[0], target[0]], [y[0], target[1]], [z[0], target[2]], color='orange', linestyle='--')
-
-        
-        self.ax.set_xlabel('X Axis[m]')
-        self.ax.set_ylabel('Y Axis[m]')
-        self.ax.set_zlabel('Z Axis[m]')
-        self.ax.legend()
-        self.ax.view_init(elev=-45, azim=-90, roll=0)
-        self.ax.set_xlim(-1, 1)
-        self.ax.set_ylim(-1, 1)
-        self.ax.set_zlim(-1, 1)
-
-        self.canvas_3d.draw()
-
-    def update_frame(self, value):
-        frame_idx = int(value)
-        self.display_frame(frame_idx)
-        self.current_frame = frame_idx
-
-    def play_video(self):
-        if not self.cap or self.is_playing:
-            return
-        self.is_playing = True
-        threading.Thread(target=self.play_video_thread).start()
-
-    def play_video_thread(self):
-        while self.is_playing and self.current_frame < self.frame_count:
-            self.display_frame(self.current_frame)
-            self.current_frame += 1
-            time.sleep(0.03)
-            self.root.update_idletasks()
-        self.is_playing = False
-
-    def stop_video(self):
-        self.is_playing = False
-
-    def resize_frame(self, frame, target_width, target_height):
-        h, w = frame.shape[:2]
-        aspect_ratio = w / h
-        if target_width / target_height > aspect_ratio:
-            new_height = target_height
-            new_width = int(aspect_ratio * target_height)
-        else:
-            new_width = target_width
-            new_height = int(target_width / aspect_ratio)
-        return cv2.resize(frame, (new_width, new_height))
-
-    def resize_window(self, event):
+    def show_frame(self):
         if self.cap:
-            self.display_frame(self.current_frame)
+            self.frame_pos = self.frame_slider.get()
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_pos)
+            ret, frame = self.cap.read()
+            if ret:
+                frame = cv2.resize(frame, (640, 480))
+                self.tk_image = self.cv_to_tk(frame)
+                self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
+                self.root.title(f"Video Trimmer - Frame {self.frame_pos}/{self.total_frames}")
+                if self.start_frame <= self.frame_pos <= self.end_frame:
+                    self.canvas.config(highlightbackground="green")
+                else:
+                    self.canvas.config(highlightbackground="red")
 
-    def add_target(self):
-        x = simpledialog.askfloat("Input", "Enter X coordinate of target:")
-        y = simpledialog.askfloat("Input", "Enter Y coordinate of target:")
-        z = simpledialog.askfloat("Input", "Enter Z coordinate of target:")
-        if x is not None and y is not None and z is not None:
-            self.target_locations.append([x, y, z])
-            self.update_skeleton_3d(self.gesture_detector.pose.pose_world_landmarks)
+    def cv_to_tk(self, frame):
+        import PIL.Image, PIL.ImageTk
+        img = PIL.Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        return PIL.ImageTk.PhotoImage(image=img)
 
-    def remove_target(self):
-        if self.target_locations:
-            self.target_locations.pop()
-            self.update_skeleton_3d(self.gesture_detector.pose.pose_world_landmarks)
+    def next_frame(self, event=None):
+        if self.frame_pos < self.total_frames - 1:
+            self.frame_pos += 1
+            self.frame_slider.set(self.frame_pos)
+            self.show_frame()
 
-# Main application
+    def prev_frame(self, event=None):
+        if self.frame_pos > 0:
+            self.frame_pos -= 1
+            self.frame_slider.set(self.frame_pos)
+            self.show_frame()
+
+    def update_frame(self, val):
+        self.frame_pos = int(val)
+        self.show_frame()
+
+    def mark_start_frame(self):
+        self.start_frame = self.frame_pos
+        self.mark_start_btn.config(text=f"Mark Start (Frame {self.start_frame})")
+
+    def mark_end_frame(self):
+        self.end_frame = self.frame_pos
+        self.mark_end_btn.config(text=f"Mark End (Frame {self.end_frame})")
+
+    def load_video_path(self, path):
+        """Call this externally to load a video from a given path."""
+        self.load_video(video_path=path)
+        
 if __name__ == "__main__":
+    import sys
+    import glob
+    import os
+    from urllib.parse import unquote
+
     root = tk.Tk()
-    app = VideoPlayerGUI(root)
+    app = VideoTrimmerGUI(root)
+
+    if len(sys.argv) > 1:
+        # Join all arguments into a single path string
+        raw_input = " ".join(sys.argv[1:])
+        clean_input = unquote(raw_input.strip('"'))
+
+        if os.path.isdir(clean_input):
+            video_files = sorted(glob.glob(os.path.join(clean_input, "*", "Color.mp4")))
+            print(f"🎞️ Found {len(video_files)} videos.")
+            # Set video_batch and batch_index, and load the first video
+            app.video_batch = sorted(video_files)
+            app.batch_index = 0
+            app.load_video_path(app.video_batch[0])
+        elif os.path.isfile(clean_input):
+            app.load_video_path(clean_input)
+
     root.mainloop()

@@ -1,3 +1,4 @@
+# Add imports for yaml and os
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -6,6 +7,8 @@ from gesture_util import *
 import sys
 import argparse
 import pandas as pd
+import yaml
+import os
 # import pyrealsense2 as rs
 class PointingGestureDetector:
     __ELBOW_WRIST_COLOR = (13, 204, 255)
@@ -38,12 +41,17 @@ class PointingGestureDetector:
         self.pointing_hand_handedness = ''
         self.pointing_count = 0
 
+        # Load human.yaml and extract human_origin
+        human_yaml_path = 'config/human.yaml'
+        with open(human_yaml_path, 'r') as file:
+            self.human_data = yaml.safe_load(file)
+        self.human_origin = self.human_data['targets'][0]['position_m']
+
         # Data storage (using pandas DataFrame)
         self.data = pd.DataFrame(columns=[
             'frame', 'gesture_duration', 'pointing_count', 'pointing_arm',
-            'eye_to_wrist', 'shoulder_to_wrist', 'elbow_to_wrist', 'nose_to_wrist',
-            'wrist_to_index','eye_to_index','shoulder_to_index','elbow_to_index','nose_to_index',
-            'wrist_location', 'landmarks', 'landmarks_3d'
+            'eye_to_wrist', 'shoulder_to_wrist', 'elbow_to_wrist', 'nose_to_wrist', 'wrist_to_index',
+            'wrist_location', 'handedness', 'landmarks', 'landmarks_3d', 'confidence'
         ])
 
         
@@ -75,7 +83,6 @@ class PointingGestureDetector:
         """
         if vectors is not None and duration is not None:
             for key, vector in vectors.items():
-                print(key, vector)
                 if vector is not None:  # Only update if the vector is valid
                     self.pointing_weighted_sum[key] = self.pointing_weighted_sum[key] + np.array(vector) * duration
             
@@ -88,7 +95,7 @@ class PointingGestureDetector:
                 for key in self.pointing_weighted_sum
             } 
         
-    def save_gesture_data(self, frame_num, gesture_duration, pointing_arm, vectors, wrist_location, landmarks_2d, landmarks_3d):
+    def save_gesture_data(self, frame_num, gesture_duration, pointing_arm, vectors, wrist_location, landmarks_2d, landmarks_3d, confidence):
         """
         Save the detected pointing gesture data into the dataframe.
         
@@ -97,44 +104,56 @@ class PointingGestureDetector:
             pointing_arm: The arm used for pointing (left or right).
             vectors: A dictionary of pointing vectors.
             wrist_location: The 3D location of the wrist.
+            confidence: The confidence of the pointing detection.
         """
         # Add a new row to the dataframe with all the relevant data
+        # If landmarks_3d are present, convert them to camera coordinates before saving
+        landmarks_3d_cam = None
+        if landmarks_3d is not None and hasattr(landmarks_3d, "landmark"):
+            landmarks_3d_cam = []
+            for lm in landmarks_3d.landmark:
+                landmark_cam = [
+                    lm.x + self.human_origin[0],  # flip X and translate
+                    lm.y + self.human_origin[1],  # flip Y and translate
+                    lm.z + self.human_origin[2]   # Z stays the same, just translate
+                ]
+                landmarks_3d_cam.append(landmark_cam)
+        else:
+            landmarks_3d_cam = landmarks_3d
+
         if vectors is not None:
             new_row = {
                 'frame': frame_num,
                 'gesture_duration': gesture_duration,
                 'pointing_count': self.pointing_count,
                 'pointing_arm': pointing_arm,
-                'eye_to_wrist': [vectors['eye_to_wrist']],
-                'shoulder_to_wrist': [vectors['shoulder_to_wrist']],
-                'elbow_to_wrist': [vectors['elbow_to_wrist']],
-                'nose_to_wrist': [vectors['nose_to_wrist']],
-                'wrist_to_index':[vectors['wrist_to_index']],
-                'eye_to_index':[vectors['eye_to_index']],
-                'shoulder_to_index':[vectors['shoulder_to_index']],
-                'elbow_to_index':[vectors['elbow_to_index']],
-                'nose_to_index':[vectors['nose_to_index']],
-                'wrist_location': wrist_location, 
-                'landmarks': landmarks_2d,
-                'landmarks_3d': landmarks_3d
+                'eye_to_wrist': vectors['eye_to_wrist'].tolist() if vectors['eye_to_wrist'] is not None else [None, None, None],
+                'shoulder_to_wrist': vectors['shoulder_to_wrist'].tolist() if vectors['shoulder_to_wrist'] is not None else [None, None, None],
+                'elbow_to_wrist': vectors['elbow_to_wrist'].tolist() if vectors['elbow_to_wrist'] is not None else [None, None, None],
+                'nose_to_wrist': vectors['nose_to_wrist'].tolist() if vectors['nose_to_wrist'] is not None else [None, None, None],
+                'wrist_to_index': vectors['wrist_to_index'].tolist() if vectors['wrist_to_index'] is not None else [None, None, None],
+                'wrist_location': [wrist_location.x, wrist_location.y, wrist_location.z] if wrist_location else [None, None, None],
+                'landmarks': [landmarks_2d],
+                'landmarks_3d': [landmarks_3d_cam],
+                'confidence': confidence
             }
         else:
             new_row = {
                 'frame': frame_num,
-                'gesture_duration': [""],
+                'gesture_duration': None,
                 'pointing_count': self.pointing_count,
-                'pointing_arm': [""],
-                'eye_to_wrist': [""],
-                'shoulder_to_wrist': [""],
-                'elbow_to_wrist': [""],
-                'nose_to_wrist': [""],
-                'wrist_location': [""], 
-                'landmarks': landmarks_2d,
-                'landmarks_3d': landmarks_3d
+                'pointing_arm': None,
+                'eye_to_wrist': None,
+                'shoulder_to_wrist': None,
+                'elbow_to_wrist': None,
+                'nose_to_wrist': None,
+                'wrist_to_index': None,
+                'wrist_location': None,
+                'landmarks': [landmarks_2d],
+                'landmarks_3d': [landmarks_3d_cam],
+                'confidence': confidence
             }
-        new_row = pd.DataFrame(new_row)
-        
-        self.data = pd.concat([self.data, new_row], ignore_index=True)
+        self.data = pd.concat([self.data, pd.DataFrame([new_row])], ignore_index=True)
 
             
     def process_frame(self, image):
@@ -147,10 +166,10 @@ class PointingGestureDetector:
         is_arm_pointing = False
         hand_handedness = None
         prev_arm = self.pointing_hand_handedness
+        pointing_confidence = 0
         
         # draw pose landmarks
-        if hand_results.multi_hand_landmarks:
-            print('-----') 
+        if hand_results.multi_hand_landmarks: 
             for idx, hand_landmarks in enumerate(hand_results.multi_hand_landmarks):
                 mp.solutions.drawing_utils.draw_landmarks(image, hand_results.multi_hand_landmarks[idx], mp.solutions.hands.HAND_CONNECTIONS)
         mp.solutions.drawing_utils.draw_landmarks(image, pose_results.pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
@@ -171,17 +190,20 @@ class PointingGestureDetector:
                 
         landmarks = pose_results.pose_world_landmarks
         landmarks_2d = pose_results.pose_landmarks
+        # Rescale y-coordinate of 2D landmarks if present
+        if landmarks_2d is not None and hasattr(landmarks_2d, "landmark"):
+            for lm in landmarks_2d.landmark:
+                lm.y *= 7.0 / 8.0
         # for far proximity detect arm gestures
         if landmarks:
             # Check if the arm is raised and extended
             arm_handedness, arm_confidence, is_arm_pointing = is_pointing_arm(landmarks.landmark)
             if is_arm_pointing:
-                print(f"Pointing detected with {arm_handedness} arm, confidence: {arm_confidence}")
                 self.pointing = True
                 self.pointing_hand_handedness = arm_handedness
                 pointing_confidence = arm_confidence
         else:
-            self.save_gesture_data(self.frame, None, None, None, None, landmarks_2d,landmarks)
+            self.save_gesture_data(self.frame, None, None, None, None, landmarks_2d, landmarks, 0)
             self.frame += 1
             return image
         if not (is_hand_pointing or is_arm_pointing):
@@ -191,11 +213,7 @@ class PointingGestureDetector:
 
         # if pointing is detected, update and store weighted vectors
         if self.pointing:
-            
-            # pointing_hand = self.pointing_hand_handedness
-            
             vectors = self.find_vectors(pointing_hand, landmarks)
-            print(vectors)
             joints = self.find_joint_locations(pointing_hand, landmarks)
             
             current_time = time.time()
@@ -204,22 +222,19 @@ class PointingGestureDetector:
             if self.pointing_hand_handedness != prev_arm:
                 self.pointing_count += 1
             prev_arm = self.pointing_hand_handedness
-                
-            # Save gesture data
-            self.save_gesture_data(self.frame, self.gesture_duration, self.pointing_hand_handedness, vectors, joints['wrist'],landmarks_2d, landmarks)
-            
-            vectors_2d = self.find_vectors(pointing_hand, landmarks_2d)
             joints_2d = self.find_joint_locations(pointing_hand, landmarks_2d)
-            self.display_visualization(image, joints_2d, vectors_2d)
-            self.display_info(image, self.pointing_hand_handedness, self.gesture_duration, vectors)
+            wrist_location = joints_2d['wrist']
+            # Save gesture data
+            self.save_gesture_data(self.frame, self.gesture_duration, self.pointing_hand_handedness, vectors, wrist_location, landmarks_2d, landmarks, pointing_confidence)
             
+            
+            # self.display_visualization(image, joints_2d, vectors_2d)
+            # self.display_info(image, self.pointing_hand_handedness, self.gesture_duration, vectors)
         # if there is not pointing, clear all stored values
         else: 
-            self.save_gesture_data(self.frame, None, None, None, None, landmarks_2d, landmarks)
+            self.save_gesture_data(self.frame, None, None, None, None, landmarks_2d, landmarks, 0)
             self.clear_values()
-            
         self.frame += 1
-        
         return image
 
     def find_vectors(self, pointing_hand, landmarks):
@@ -420,7 +435,7 @@ class PointingGestureDetector:
             image = cv2.flip(image, 1)  # 1 flips horizontally
 
             processed_image = self.process_frame(image)
-            cv2.imshow('Pointing Gesture Detection', processed_image)
+            # cv2.imshow('Pointing Gesture Detection', processed_image)
             
             if cv2.waitKey(5) & 0xFF == 27:
                 break
@@ -485,7 +500,7 @@ class PointingGestureDetector:
         if not cap.isOpened():
             print(f"Error: Could not open video {video_path}")
             return
-
+        
         while cap.isOpened():
             success, image = cap.read()
             if not success:
@@ -494,10 +509,10 @@ class PointingGestureDetector:
             # Flip image horizontally if necessary, else remove the flip
             # image = cv2.flip(image, 1)
             height, width, channels = image.shape
-            crop_img = image[0:height * 4 //8, :]
+            crop_img = image[0:height *7 //8, :]
             
             processed_image = self.process_frame(crop_img)
-            cv2.imshow('Pointing Gesture Detection', processed_image)
+            # cv2.imshow('Pointing Gesture Detection', processed_image)
             import os
             output_path = video_path[0:-4]
             # Create the directory if it does not exist
@@ -505,6 +520,7 @@ class PointingGestureDetector:
                 os.makedirs(output_path)
 
             cv2.imwrite(output_path+'/f%i.png'%(frame_num), processed_image)
+            print(f'Processing frame {frame_num}...')
             frame_num += 1
             if cv2.waitKey(5) & 0xFF == 27:  # Press 'ESC' to exit
                 break
@@ -538,9 +554,7 @@ if __name__ == "__main__":
             print(f"Running in local video mode with video: {args.video_path}")
             detector.run_video(args.video_path)
             
-    elif args.mode == 'rs':
-        print("Running in spot video mode...")
-        detector.run_stream_rs()
+
     
     else:
         detector.run_stream()
