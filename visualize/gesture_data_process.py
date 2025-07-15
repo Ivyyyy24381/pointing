@@ -19,6 +19,9 @@ class GestureDataProcessor:
     def __init__(self, file_path):
         self.file_path = file_path
         self.root_path = file_path.rsplit('/', 1)[0]  # Get the root path from the file path
+        self.dog_id = file_path.split('/')[-3].split('.')[0].split('_')[0]
+        self.dog_name = file_path.split('/')[-3].split('.')[0].split('_')[1]  # Extract trial name from the file path
+        self.trial_number = file_path.split('/')[-2].split('.')[0]
         self.rgb_folder = os.path.join(self.root_path,'Color')
         # get the first index in the rgb folder
         self.rgb_files = sorted([f for f in os.listdir(self.rgb_folder) if f.endswith('.jpg') or f.endswith('.png')])
@@ -27,7 +30,12 @@ class GestureDataProcessor:
         intrinsics_path = "config/camera_config.yaml"
         targets_path = "config/targets.yaml"
         human_path = "config/human.yaml"
+        if os.path.exists(os.path.join(self.root_path, 'fig')):
+            # remove existing 'fig' directory if it exists
+            import shutil
+            shutil.rmtree(os.path.join(self.root_path, 'fig'))
         os.makedirs(os.path.join(self.root_path, 'fig'), exist_ok=True)  # Ensure root path exists
+
 
         # Load gesture data
         self.gesture_data = pd.read_csv(file_path)
@@ -51,6 +59,8 @@ class GestureDataProcessor:
         Returns:
             np.ndarray: Transformed Nx3 points.
         """
+        if points is None:
+            return None
         N = points.shape[0]
         homog = np.hstack([points, np.ones((N, 1))])
         transformed = (transformation_matrix @ homog.T).T
@@ -173,10 +183,12 @@ class GestureDataProcessor:
         ax.text(x, z, "Human", fontsize=9, color='gray')
 
         # Plot ground intersections with alpha increasing by frame
-        max_frame = processed_gesture_data['frame'].max()
+        num_frame = len(processed_gesture_data['frame'])
+        
         for idx, row in processed_gesture_data.iterrows():
             frame = row['frame']
-            alpha = 0.1 + 0.9 * (frame / max_frame)  # alpha from 0.1 to 1.0
+            
+            alpha =  0.1+0.9*(idx / num_frame)  # alpha from 0.1 to 1.0
             for vec_key, color in color_map.items():
                 intersection_key = f'{vec_key}_ground_intersection'
                 if (
@@ -200,11 +212,11 @@ class GestureDataProcessor:
         ax.set_ylabel('Z (m)')
         ax.set_xlim([1.5, -1.5])
         ax.set_ylim([-2, 2.5])
-        ax.set_title('2D Ground Intersection Points of Pointing Vectors')
+        ax.set_title(f'{self.dog_id} 2D Ground Intersection Points of Pointing Vectors')
         ax.grid(True)
 
         plt.savefig(os.path.join(self.root_path, '2d_pointing_trace.png'), dpi=150)
-
+        plt.close(fig)  # Close the figure to free memory
     def plot_3d_skeleton(self, landmarks_3d, targets=None,  vectors=None, wrist_location=None, head_orientation=None, frame_id = None):
         """
         Plot a 3D skeleton with optional targets, ground plane, and wrist-based pointing vectors.
@@ -276,9 +288,10 @@ class GestureDataProcessor:
         ax.set_ylim([-0.2, 2])
         ax.set_zlim([-1, 1])
         ax.set_aspect('auto')
-        ax.set_title('3D Skeleton Plot')
+        ax.set_title(f'{self.dog_id}_{frame_id}_3D Skeleton Plot')
         ax.legend()
         plt.savefig(os.path.join(self.root_path,'fig', f'{frame_id}_skeleton_plot.png'), dpi=150)
+        plt.close(fig)  # Close the figure to free memory
         # Do not call plt.show() here to allow for further drawing before showing.
         return ax, fig
 
@@ -307,6 +320,8 @@ class GestureDataProcessor:
             landmarks_2d = self.parse_landmarks(row['landmarks'], mode="mediapipe", output_format="list")
             landmarks_3d = self.parse_landmarks(row['landmarks_3d'], mode="list", output_format="list")
             # Transform the 3D landmarks before plotting them
+            if landmarks_3d is None:
+                continue
             transformed_landmarks_3d = self.transform_points(np.array(landmarks_3d), T)
             # --- Transform and plot gesture vectors ---
             vectors = {
@@ -479,14 +494,28 @@ class GestureDataProcessor:
             'head_orientation_vector', 'head_orientation_origin','landmarks', 'confidence'
         ]
         df = pd.DataFrame(rows, columns=columns)
+        # Count number of 'left' and 'right' in the pointing_arm column
+        left_count = (df['pointing_arm'] == 'Left').sum()
+        right_count = (df['pointing_arm'] == 'Right').sum()
+
+        print(f"🫲 Left pointing frames: {left_count}")
+        print(f"🫱 Right pointing frames: {right_count}")
+
+        # Determine dominant hand (the one with more frames)
+        dominant_hand = 'Left' if left_count > right_count else 'Right'
+
+        # Filter only frames with the dominant pointing arm
+        df = df[df['pointing_arm'] == dominant_hand].reset_index(drop=True)
+
         self.plot_2d_pointing_trace(df, transformed_targets, transformed_human_target)
+        
         df.to_csv(os.path.join(self.root_path,"processed_gesture_data.csv"), index=False)
         return df
 
 
 # --------- Script Entry Point ----------
 if __name__ == "__main__":
-    file_path = "/Users/ivy/Library/CloudStorage/GoogleDrive-xiao_he@brown.edu/Shared drives/pointing_production/BDL202_Dee-Dee_front/2/gesture_data.csv"  # Path to your gesture data file
+    file_path = f"/Users/ivy/Library/CloudStorage/GoogleDrive-xiao_he@brown.edu/Shared drives/pointing_production_dog/BDL202_Dee-Dee_front/2/gesture_data.csv"  # Path to your gesture data file
     Gesture_data_processor = GestureDataProcessor(file_path)
     trimmed_data = Gesture_data_processor.trim_data(Gesture_data_processor, start_frame=129, end_frame=180)  # Example frame range
     Gesture_data_processor.process_data(trimmed_data)

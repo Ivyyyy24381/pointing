@@ -1,3 +1,4 @@
+from tqdm import tqdm
 import cv2
 import tkinter as tk
 from tkinter import filedialog
@@ -9,6 +10,7 @@ import sys
 sys.path.append('./')  
 sys.path.append('visualize')# Adjust this path based on your project structure
 from gesture_data_process import GestureDataProcessor
+from gesture_detection import PointingGestureDetector
 class VideoTrimmerGUI:
     INTRINSICS_PATH = "config/camera_config.yaml"
     TARGETS_PATH = "config/targets.yaml"
@@ -18,16 +20,42 @@ class VideoTrimmerGUI:
         print(f"Processing video: {self.video_path}")
         print(f"Start frame: {self.start_frame}")
         print(f"End frame: {self.end_frame}")
-        
+
+        import shutil
+        from tqdm import tqdm
+        import os
+
         root_path = self.video_path.rsplit('/', 1)[0]
+        color_video_path = os.path.join(root_path, 'Color.mp4')
         data_path = os.path.join(root_path, "gesture_data.csv")
+        if not os.path.exists(data_path):
+            gesture_processor = PointingGestureDetector().run_video(color_video_path)
+            
         Gesture_data_processor = GestureDataProcessor(data_path)
-        trimmed_data = Gesture_data_processor.trim_data(Gesture_data_processor, start_frame=self.start_frame, end_frame=self.end_frame)  # Example frame range
+        trimmed_data = Gesture_data_processor.trim_data(Gesture_data_processor, start_frame=self.start_frame, end_frame=self.end_frame)
+
+        # Remove existing processed_gesture_data.csv before processing (if needed)
+        processed_csv_path = os.path.join(root_path, "processed_gesture_data.csv")
+        if os.path.exists(processed_csv_path):
+            os.remove(processed_csv_path)
+
         Gesture_data_processor.process_data(trimmed_data)
-        messagebox.showinfo("Success", f"Processed trimmed data saved to {root_path}/processed_gesture_data.csv")
-        
-        
-        
+        tqdm.write(f"✅ Processed trimmed data saved to {root_path}/processed_gesture_data.csv")
+
+        # Reset video and proceed to next
+        if hasattr(self, "video_batch") and hasattr(self, "batch_index"):
+            self.cap.release()
+            self.canvas.delete("all")
+            self.batch_index += 1
+            if self.batch_index < len(self.video_batch):
+                self.load_video_path(self.video_batch[self.batch_index])
+            else:
+                tqdm.write("🎉 All videos processed.")
+                self.root.quit()
+        else:
+            if self.progress:
+                self.progress.update(1)
+            self.next_video()
     def __init__(self, root):
         self.root = root
         self.root.title("Video Trimmer")
@@ -38,6 +66,8 @@ class VideoTrimmerGUI:
         self.total_frames = 0
         self.start_frame = 0
         self.end_frame = 0
+        self.video_queue = []
+        self.progress = None
 
         self.canvas = tk.Canvas(root, width=640, height=480, highlightthickness=2)
         self.canvas.pack()
@@ -59,8 +89,26 @@ class VideoTrimmerGUI:
         self.root.bind("<Right>", self.next_frame)
         self.root.bind("<Left>", self.prev_frame)
 
-    def load_video(self):
-        self.video_path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4"), ("All files", "*.*")])
+    def set_video_queue(self, video_list):
+        self.video_queue = video_list
+        if self.video_queue:
+            self.progress = tqdm(total=len(self.video_queue), desc="Processing Videos")
+            self.load_video_path(self.video_queue.pop(0))
+
+    def next_video(self):
+        if self.video_queue:
+            next_path = self.video_queue.pop(0)
+            self.load_video_path(next_path)
+        else:
+            if self.progress:
+                self.progress.close()
+            self.root.quit()
+    
+    def load_video(self, video_path=None):
+        if video_path:
+            self.video_path = video_path
+        else:
+            self.video_path = filedialog.askopenfilename(filetypes=[("MP4 files", "*.mp4"), ("All files", "*.*")])
         if not self.video_path:
             return
         self.cap = cv2.VideoCapture(self.video_path)
@@ -116,7 +164,32 @@ class VideoTrimmerGUI:
         self.end_frame = self.frame_pos
         self.mark_end_btn.config(text=f"Mark End (Frame {self.end_frame})")
 
+    def load_video_path(self, path):
+        """Call this externally to load a video from a given path."""
+        self.load_video(video_path=path)
+        
 if __name__ == "__main__":
+    import sys
+    import glob
+    import os
+    from urllib.parse import unquote
+
     root = tk.Tk()
     app = VideoTrimmerGUI(root)
+
+    if len(sys.argv) > 1:
+        # Join all arguments into a single path string
+        raw_input = " ".join(sys.argv[1:])
+        clean_input = unquote(raw_input.strip('"'))
+
+        if os.path.isdir(clean_input):
+            video_files = sorted(glob.glob(os.path.join(clean_input, "*", "Color.mp4")))
+            print(f"🎞️ Found {len(video_files)} videos.")
+            # Set video_batch and batch_index, and load the first video
+            app.video_batch = sorted(video_files)
+            app.batch_index = 0
+            app.load_video_path(app.video_batch[0])
+        elif os.path.isfile(clean_input):
+            app.load_video_path(clean_input)
+
     root.mainloop()
