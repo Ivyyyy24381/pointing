@@ -11,6 +11,7 @@ sys.path.append('./')
 sys.path.append('visualize')# Adjust this path based on your project structure
 from gesture_data_process import GestureDataProcessor
 from gesture_detection import PointingGestureDetector
+from batch_point_production import run_gesture_detection
 class VideoTrimmerGUI:
     INTRINSICS_PATH = "config/camera_config.yaml"
     TARGETS_PATH = "config/targets.yaml"
@@ -29,7 +30,9 @@ class VideoTrimmerGUI:
         color_video_path = os.path.join(root_path, 'Color.mp4')
         data_path = os.path.join(root_path, "gesture_data.csv")
         if not os.path.exists(data_path):
-            gesture_processor = PointingGestureDetector().run_video(color_video_path)
+            # gesture_processor = PointingGestureDetector().run_video(color_video_path)
+            base_path, subject_name, trial_no, _ = self.video_path.rsplit('/', 3)
+            run_gesture_detection(base_path, subject_folder=subject_name, trial_id = trial_no)
             
         Gesture_data_processor = GestureDataProcessor(data_path)
         trimmed_data = Gesture_data_processor.trim_data(Gesture_data_processor, start_frame=self.start_frame, end_frame=self.end_frame)
@@ -40,6 +43,8 @@ class VideoTrimmerGUI:
             os.remove(processed_csv_path)
 
         Gesture_data_processor.process_data(trimmed_data)
+
+        run_gesture_detection
         tqdm.write(f"✅ Processed trimmed data saved to {root_path}/processed_gesture_data.csv")
 
         # Reset video and proceed to next

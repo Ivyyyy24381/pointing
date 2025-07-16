@@ -189,7 +189,7 @@ class SAM2VideoSegmenter:
 
 
 if __name__ == "__main__":
-    segmenter = SAM2VideoSegmenter("/Users/ivy/Library/CloudStorage/GoogleDrive-xiao_he@brown.edu/Shared drives/pointing_comprehension_dog/BDL049_Star_side_cam/1/Color")
+    segmenter = SAM2VideoSegmenter("/home/xhe71/Desktop/dog_data/baby/CCD0430_side/1/Color")
     segmenter.load_video_frames()
     segmenter.interactive_segmentation()
     segmenter.propagate_segmentation()

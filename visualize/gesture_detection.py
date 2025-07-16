@@ -131,7 +131,7 @@ class PointingGestureDetector:
                 'shoulder_to_wrist': vectors['shoulder_to_wrist'].tolist() if vectors['shoulder_to_wrist'] is not None else [None, None, None],
                 'elbow_to_wrist': vectors['elbow_to_wrist'].tolist() if vectors['elbow_to_wrist'] is not None else [None, None, None],
                 'nose_to_wrist': vectors['nose_to_wrist'].tolist() if vectors['nose_to_wrist'] is not None else [None, None, None],
-                'wrist_to_index': vectors['wrist_to_index'].tolist() if vectors['wrist_to_index'] is not None else [None, None, None],
+                # 'wrist_to_index': vectors['wrist_to_index'].tolist() if vectors['wrist_to_index'] is not None else [None, None, None],
                 'wrist_location': [wrist_location.x, wrist_location.y, wrist_location.z] if wrist_location else [None, None, None],
                 'landmarks': [landmarks_2d],
                 'landmarks_3d': [landmarks_3d_cam],
@@ -281,40 +281,42 @@ class PointingGestureDetector:
         elbow_to_wrist_vector = calculate_vector(elbow, wrist)
         nose_to_wrist_vector = calculate_vector(nose, wrist)
         
-        try:
-            index_finger_tip = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
-            index_finger_mcp = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
-            
-        except (IndexError, TypeError):
-            index_finger_tip = None
-            index_finger_mcp = None
-        if index_finger_tip is None:
+        index_finger_tip = None
+        if pointing_hand is not None:
             try:
-                index_finger_tip = landmarks.landmark[
-                    mp.solutions.pose.PoseLandmark.LEFT_INDEX if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_INDEX
-                ]
-            except (IndexError, AttributeError):
+                index_finger_tip = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
+                index_finger_mcp = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
+                
+            except (IndexError, TypeError):
                 index_finger_tip = None
-            
-        index_finger_vector = calculate_vector(index_finger_mcp, index_finger_tip)
-        wrist_to_index_vector = calculate_vector(wrist, index_finger_tip)
+                index_finger_mcp = None
+            if index_finger_tip is None:
+                try:
+                    index_finger_tip = landmarks.landmark[
+                        mp.solutions.pose.PoseLandmark.LEFT_INDEX if self.pointing_hand_handedness == "Left" else mp.solutions.pose.PoseLandmark.RIGHT_INDEX
+                    ]
+                except (IndexError, AttributeError):
+                    index_finger_tip = None
+                
+            index_finger_vector = calculate_vector(index_finger_mcp, index_finger_tip)
+            wrist_to_index_vector = calculate_vector(wrist, index_finger_tip)
 
-        eye_to_index_vector = calculate_vector(eye, index_finger_tip)
-        shoulder_to_index_vector = calculate_vector(shoulder, index_finger_tip)
-        elbow_to_index_vector = calculate_vector(elbow, index_finger_tip)
-        nose_to_index_vector = calculate_vector(nose, index_finger_tip)
+            eye_to_index_vector = calculate_vector(eye, index_finger_tip)
+            shoulder_to_index_vector = calculate_vector(shoulder, index_finger_tip)
+            elbow_to_index_vector = calculate_vector(elbow, index_finger_tip)
+            nose_to_index_vector = calculate_vector(nose, index_finger_tip)
 
         return {
             "eye_to_wrist": eye_to_wrist_vector,
             "shoulder_to_wrist": shoulder_to_wrist_vector,
             "elbow_to_wrist": elbow_to_wrist_vector,
             "nose_to_wrist": nose_to_wrist_vector,
-            "wrist_to_index": wrist_to_index_vector,
-            "index_finger": index_finger_vector, 
-            "eye_to_index": eye_to_index_vector,
-            "shoulder_to_index": shoulder_to_index_vector,
-            "elbow_to_index": elbow_to_index_vector,
-            "nose_to_index": nose_to_index_vector
+            # "wrist_to_index": wrist_to_index_vector,
+            # "index_finger": index_finger_vector, 
+            # "eye_to_index": eye_to_index_vector,
+            # "shoulder_to_index": shoulder_to_index_vector,
+            # "elbow_to_index": elbow_to_index_vector,
+            # "nose_to_index": nose_to_index_vector
         }
 
     def find_joint_locations(self, pointing_hand, landmarks):
@@ -327,7 +329,10 @@ class PointingGestureDetector:
         except (IndexError, TypeError):
             wrist = None 
         try:
-            index_finger_tip = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
+            if pointing_hand is None:
+                index_finger_tip = None
+            else:
+                index_finger_tip = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_TIP]
         except (IndexError, TypeError):
             index_finger_tip = None
         if index_finger_tip is None:
@@ -339,7 +344,10 @@ class PointingGestureDetector:
                 index_finger_tip = None
         
         try:
-            index_finger_mcp = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
+            if pointing_hand is None:
+                index_finger_mcp = None
+            else:
+                index_finger_mcp = pointing_hand[mp.solutions.hands.HandLandmark.INDEX_FINGER_MCP]
         except (IndexError, TypeError):
             index_finger_mcp = None
             
@@ -377,8 +385,8 @@ class PointingGestureDetector:
             "elbow": elbow,
             "nose": nose,
             "wrist": wrist,
-            "index_finger": index_finger_tip,
-            "index_finger_mcp":index_finger_mcp
+            # "index_finger": index_finger_tip,
+            # "index_finger_mcp":index_finger_mcp
         }
         
         
