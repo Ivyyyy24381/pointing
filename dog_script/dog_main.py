@@ -3,6 +3,7 @@ from dog_pose_visualize import pose_visualize
 import os
 import argparse
 import matplotlib
+from segmentation import SAM2VideoSegmenter
 matplotlib.use('Agg')
 
 def process_dog(folder_path, side_view=False):
@@ -12,7 +13,23 @@ def process_dog(folder_path, side_view=False):
             continue
 
         video_path = os.path.join(folder_full_path, 'Color.mp4')
+        segmenter = SAM2VideoSegmenter(os.path.join(folder_full_path, 'Color'))
+        segmenter.load_video_frames()
+        segmenter.interactive_segmentation()
+        segmenter.propagate_segmentation()
+        segmenter.visualize_results()
+        # Clean up temp JPEG folder if it was created
+        if hasattr(segmenter, "tmp_jpeg_dir") and segmenter.tmp_jpeg_dir is not None:
+            import shutil
+            try:
+                shutil.rmtree(segmenter.tmp_jpeg_dir)
+            except Exception as e:
+                print(f"Warning: failed to remove temp JPEG dir {segmenter.tmp_jpeg_dir}: {e}")
+        segmented_video_path = os.path.join(folder_full_path, 'masked_video.mp4')
+        if os.path.exists(segmented_video_path):
+            video_path = segmented_video_path
         detect_dog(video_path)
+        
 
         json_files = [f for f in os.listdir(folder_full_path) if f.endswith('.json') and 'Color' in f]
         if not json_files:

@@ -158,7 +158,7 @@ def prepare_video_and_json(output_dir, json_path, side_view):
         depth_files = sorted([f for f in os.listdir(depth_video_path) if f.endswith(".raw")])
         first_img = cv2.imread(os.path.join(video_path, color_files[0]))
         height, width = first_img.shape[:2]
-        fps=30
+        fps=6
         cap = depth_cap = None
         # Extract starting frame index from first filename
         if color_files:
@@ -708,6 +708,8 @@ def pose_visualize(json_path, side_view = False):
     per_frame_target_metrics = []
     detection_started_flag = False
     missing_frame_count = 0
+    last_color_frame = None
+    last_depth_frame = None
     while True:
         frame_idx += 1
         if use_image_folder:
