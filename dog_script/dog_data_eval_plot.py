@@ -46,7 +46,7 @@ def regenerate_trace3d_from_csv(csv_path, fx, fy, cx, cy, depth_folder, output_c
             trace_3d.append([np.nan, np.nan, np.nan])
             continue
 
-        depth_file = os.path.join(depth_folder, f"_Depth_Color_{frame_idx:04d}.raw")
+        depth_file = os.path.join(depth_folder, f"_Depth_Color_{frame_idx:06d}.raw")
         if not os.path.exists(depth_file):
             trace_3d.append([np.nan, np.nan, np.nan])
             continue

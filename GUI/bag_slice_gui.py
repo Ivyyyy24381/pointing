@@ -189,8 +189,8 @@ class RosbagSlicerGUI:
         green_frame_time = 0
 
         while True:
-            color_path = os.path.join(color_folder, f"_Color_{frame_idx:04d}.png")
-            depth_path = os.path.join(depth_folder, f"_Depth_{frame_idx:04d}.png")
+            color_path = os.path.join(color_folder, f"_Color_{frame_idx:06d}.png")
+            depth_path = os.path.join(depth_folder, f"_Depth_{frame_idx:06d}.png")
 
             if not os.path.exists(color_path) or not os.path.exists(depth_path):
                 print(f"No more frames at index {frame_idx}")
@@ -344,23 +344,23 @@ class RosbagSlicerGUI:
         print(f"Copying frames from {start_frame} to {end_frame - 1} into {out_dir}")
 
         for idx in range(start_frame, end_frame):
-            color_src = os.path.join(color_dir, f"_Color_{idx:04d}.png")
-            depth_src = os.path.join(depth_dir, f"_Depth_{idx:04d}.png")
-            depth_color_src = os.path.join(depth_color_dir, f"_Depth_Color_{idx:04d}.png")
+            color_src = os.path.join(color_dir, f"_Color_{idx:06d}.png")
+            depth_src = os.path.join(depth_dir, f"_Depth_{idx:06d}.png")
+            depth_color_src = os.path.join(depth_color_dir, f"_Depth_Color_{idx:06d}.png")
 
             # RAW files (adjust extensions/names as needed)
-            color_raw_src = os.path.join(color_dir, f"_Color_{idx:04d}.raw")
-            depth_raw_src = os.path.join(depth_dir, f"_Depth_{idx:04d}.raw")
-            depth_color_raw_src = os.path.join(depth_color_dir, f"_Depth_Color_{idx:04d}.raw")
+            color_raw_src = os.path.join(color_dir, f"_Color_{idx:06d}.raw")
+            depth_raw_src = os.path.join(depth_dir, f"_Depth_{idx:06d}.raw")
+            depth_color_raw_src = os.path.join(depth_color_dir, f"_Depth_Color_{idx:06d}.raw")
 
             # Destinations
-            color_dst = os.path.join(out_dir, "Color", f"_Color_{idx:04d}.png")
-            depth_dst = os.path.join(out_dir, "Depth", f"_Depth_{idx:04d}.png")
-            depth_color_dst = os.path.join(out_dir, "Depth_Color", f"_Depth_Color_{idx:04d}.png")
+            color_dst = os.path.join(out_dir, "Color", f"_Color_{idx:06d}.png")
+            depth_dst = os.path.join(out_dir, "Depth", f"_Depth_{idx:06d}.png")
+            depth_color_dst = os.path.join(out_dir, "Depth_Color", f"_Depth_Color_{idx:06d}.png")
 
-            color_raw_dst = os.path.join(out_dir, "Color",  f"_Color_{idx:04d}.raw")
-            depth_raw_dst = os.path.join(out_dir, "Depth",  f"_Depth_{idx:04d}.raw")
-            depth_color_raw_dst = os.path.join(out_dir, "Depth_Color",f"_Depth_Color_{idx:04d}.raw")
+            color_raw_dst = os.path.join(out_dir, "Color",  f"_Color_{idx:06d}.raw")
+            depth_raw_dst = os.path.join(out_dir, "Depth",  f"_Depth_{idx:06d}.raw")
+            depth_color_raw_dst = os.path.join(out_dir, "Depth_Color",f"_Depth_Color_{idx:06d}.raw")
 
             # Copy images
             if os.path.exists(color_src):

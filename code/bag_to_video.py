@@ -6,104 +6,237 @@ import cv2
 from natsort import natsorted
 import copy
 from moviepy.editor import VideoFileClip, clips_array
+import yaml
+from tqdm import tqdm
+import subprocess
+import glob
 
-def run_rs_convert(bag_filepath, output_prefix, start_sec = 0, end_sec = 10000):
-    color_dir = os.path.join(output_prefix, "Color/")
-    depth_dir = os.path.join(output_prefix, "Depth/")
-    depth_color_dir = os.path.join(output_prefix, "Depth_Color/")
-    
-    # Ensure the output directories exist
-    os.makedirs(color_dir, exist_ok=True)
-    os.makedirs(depth_dir, exist_ok=True)
-    os.makedirs(depth_color_dir, exist_ok=True)
-    
+def run_rs_convert_cli(bag_filepath, output_dir, start_sec=0, end_sec=10000):
+    command = [
+        "rs-convert",
+        "-i", bag_filepath,
+        "-p", os.path.join(output_dir, "Color/"),
+        "-r", os.path.join(output_dir, "Depth/"),
+        "-s", str(start_sec),
+        "-e", str(end_sec),
+    ]
+    print(f"⚙️ Running rs-convert: {' '.join(command)}")
+    subprocess.run(command, check=True)
 
-    # command = f"rs-convert -i {bag_filepath} -p {color_dir} -r {depth_dir} -s {start_sec} -e {end_sec}"
-    # print(f"Running command: {command}")
-    # os.system(command)
+
+def extract_rs_bag_metadata_to_yaml(bag_filepath, output_yaml_path):
     pipeline = rs.pipeline()
     config = rs.config()
     config.enable_device_from_file(bag_filepath, repeat_playback=False)
     profile = pipeline.start(config)
+
     device = profile.get_device()
     playback = device.as_playback()
     playback.set_real_time(False)
     duration = playback.get_duration()
-    print(f"Bag duration: {duration.total_seconds():.2f} seconds")
 
-    align = rs.align(rs.stream.color)
-    depth_profile = profile.get_stream(rs.stream.depth)
-    intr = depth_profile.as_video_stream_profile().get_intrinsics()
-    recorded_fps = depth_profile.as_video_stream_profile().fps()
-    expected_total_frames = int(duration.total_seconds() * recorded_fps)
-    print(f"Stream fps:{recorded_fps}")
-    print("Camera Intrinsics:")
-    print(f"Width: {intr.width}, Height: {intr.height}")
-    print(f"Focal Length: fx={intr.fx}, fy={intr.fy}")
-    print(f"Principal Point: cx={intr.ppx}, cy={intr.ppy}")
-    print(f"Distortion Model: {intr.model}, Coefficients: {intr.coeffs}")
+    depth_profile = profile.get_stream(rs.stream.depth).as_video_stream_profile()
+    color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
 
+    depth_fps = depth_profile.fps()
+    color_fps = color_profile.fps()
+    recorded_fps = min(depth_fps, color_fps)
+
+    intr = depth_profile.get_intrinsics()
+
+    data = {
+        "bag_filepath": bag_filepath,
+        "duration_seconds": round(duration.total_seconds(), 2),
+        "depth_fps": depth_fps,
+        "color_fps": color_fps,
+        "recorded_fps": recorded_fps,
+        "intrinsics": {
+            "width": intr.width,
+            "height": intr.height,
+            "fx": intr.fx,
+            "fy": intr.fy,
+            "ppx": intr.ppx,
+            "ppy": intr.ppy,
+            "model": str(intr.model),
+            "coeffs": list(intr.coeffs)
+        }
+    }
+
+    with open(output_yaml_path, 'w') as f:
+        yaml.dump(data, f)
+
+    pipeline.stop()
+    print(f"✅ Metadata saved to: {output_yaml_path}")
+    return data
+
+
+
+def postprocess_rs_convert_output(output_dir, color_fps, depth_fps):
+    color_dir = os.path.join(output_dir, "Color")
+    depth_dir = os.path.join(output_dir, "Depth")
+
+    color_files = sorted(glob.glob(os.path.join(color_dir, "*.png")))
+    depth_files = sorted(glob.glob(os.path.join(depth_dir, "*.png")))
+
+    print(f"🧹 Found {len(color_files)} color frames, {len(depth_files)} depth frames")
+
+    if not color_files or not depth_files:
+        print("❌ Missing one of the streams in rs-convert output")
+        return
+
+    # Determine which stream is faster
+    if depth_fps >= color_fps:
+        fast_stream = "depth"
+        ratio = int(round(depth_fps / color_fps))
+        fast_files = depth_files
+        slow_files = color_files
+    else:
+        fast_stream = "color"
+        ratio = int(round(color_fps / depth_fps))
+        fast_files = color_files
+        slow_files = depth_files
+
+    print(f"🎯 Aligning frames: skipping 1 out of every {ratio} frames from {fast_stream}")
 
     frame_idx = 0
-     # Create colorizer object
-    colorizer = rs.colorizer()
-    try:
-        while True:
-            frames = pipeline.wait_for_frames()
+    for i in range(min(len(slow_files), len(fast_files) // ratio)):
+        slow_path = slow_files[i]
+        fast_path = fast_files[i * ratio]
 
-            if frame_idx < int(start_sec):
-                frame_idx += 1
-                continue
-            if frames is None:
+        new_name = f"_{frame_idx:06}.png"
+
+        if fast_stream == "depth":
+            os.rename(slow_path, os.path.join(color_dir, f"_Color_{new_name}"))
+            os.rename(fast_path, os.path.join(depth_dir, f"_Depth_{new_name}"))
+        else:
+            os.rename(fast_path, os.path.join(color_dir, f"_Color_{new_name}"))
+            os.rename(slow_path, os.path.join(depth_dir, f"_Depth_{new_name}"))
+
+        frame_idx += 1
+
+    # Remove all unmatched files (leftovers)
+    for f in glob.glob(os.path.join(color_dir, "*.png")):
+        if "_Color_" not in f:
+            os.remove(f)
+    for f in glob.glob(os.path.join(depth_dir, "*.png")):
+        if "_Depth_" not in f:
+            os.remove(f)
+
+    # Remove leftover metadata
+    for meta_file in glob.glob(os.path.join(output_dir, "**", "*.txt"), recursive=True):
+        os.remove(meta_file)
+
+    print(f"✅ Aligned and renamed {frame_idx} frames")
+
+def run_rs_convert(bag_filepath, output_prefix, start_sec=0, end_sec=10000):
+    color_dir = os.path.join(output_prefix, "Color/")
+    depth_dir = os.path.join(output_prefix, "Depth/")
+    depth_color_dir = os.path.join(output_prefix, "Depth_Color/")
+    os.makedirs(color_dir, exist_ok=True)
+    os.makedirs(depth_dir, exist_ok=True)
+    os.makedirs(depth_color_dir, exist_ok=True)
+
+    # Step 1: Extract and load metadata
+    metadata_path = os.path.join(output_prefix, "rosbag_metadata.yaml")
+    extract_rs_bag_metadata_to_yaml(bag_filepath, metadata_path)
+
+    if os.path.exists(metadata_path):
+        with open(metadata_path, 'r') as f:
+            metadata = yaml.safe_load(f)
+        color_fps = metadata.get("color_fps", 30)
+        depth_fps = metadata.get("depth_fps", 30)
+        duration = metadata.get("duration_seconds", 10000)
+    else:
+        print("⚠️ No metadata file found. Defaulting to 30 FPS and 10000s.")
+        color_fps = depth_fps = 30
+        duration = 10000
+
+    # if color_fps != depth_fps:
+    #     run_rs_convert_cli(bag_filepath, output_prefix,  start_sec=0, end_sec=10000)
+    #     postprocess_rs_convert_output(output_prefix, color_fps, depth_fps)
+    #     return min(color_fps, depth_fps)
+    
+    # Estimate total number of saved frames
+    fps = color_fps
+    duration_range = min(duration, end_sec) - start_sec
+    est_total_frames = int(duration_range * fps)
+    pbar = tqdm(total=est_total_frames, desc="Extracting aligned frames")
+
+    # Initialize pipeline
+    pipeline = rs.pipeline()
+    config = rs.config()
+    config.enable_device_from_file(bag_filepath, repeat_playback=False)
+    profile = pipeline.start(config)
+    playback = profile.get_device().as_playback()
+    playback.set_real_time(False)
+
+    align = rs.align(rs.stream.color)
+    colorizer = rs.colorizer()
+
+    color_count = 0
+    depth_count = 0
+    frame_idx = 0
+    skip_counter = 0
+
+    try:
+        frames = pipeline.wait_for_frames()
+        start_time = frames.get_timestamp() / 1000.0
+
+        while playback.current_status() != rs.playback_status.stopped:
+            try:
+                frames = pipeline.wait_for_frames(timeout_ms=5000)
+            except RuntimeError:
+                print("🎬 End of rosbag or timeout.")
                 break
-            if frame_idx >= end_sec:
+
+            timestamp_sec = frames.get_timestamp() / 1000.0 - start_time
+            if timestamp_sec < start_sec:
+                continue
+            if timestamp_sec >= end_sec:
                 print("✅ Done extracting all frames.")
                 break
 
-            aligned_frames = align.process(frames)
-            depth_frame = aligned_frames.get_depth_frame()
-            color_frame = aligned_frames.get_color_frame()
+            aligned = align.process(frames)
+            color_frame = aligned.get_color_frame()
+            depth_frame = aligned.get_depth_frame()
 
-            if not depth_frame or not color_frame:
+            color_valid = color_frame and color_frame.is_video_frame()
+            depth_valid = depth_frame and depth_frame.is_video_frame()
+
+            if not (color_valid or depth_valid):
+                continue  # nothing to save
+                
+            if color_valid:
+                color_count += 1
+            if depth_valid:
+                depth_count += 1
+
+            # Only save if both are present
+            if not (color_valid and depth_valid):
+                print(f"⚠️ Skipped: missing {'color' if not color_valid else 'depth'} frame")
                 continue
 
-            depth_image = np.asanyarray(depth_frame.get_data())
+            # Save aligned frame pair
             color_image = np.asanyarray(color_frame.get_data())
+            depth_raw = np.asanyarray(depth_frame.get_data())
+            depth_colored = np.asanyarray(colorizer.colorize(depth_frame).get_data())
 
-            # Colorize depth frame to jet colormap
-            depth_color_frame = colorizer.colorize(depth_frame)
+            fname = f"{frame_idx:06}.png"
+            cv2.imwrite(os.path.join(color_dir, f"_Color_{fname}"), cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB))
+            cv2.imwrite(os.path.join(depth_dir, f"_Depth_{fname}"), cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB))
+            cv2.imwrite(os.path.join(depth_color_dir, f"_Depth_Color_{fname}"), cv2.cvtColor(depth_raw, cv2.COLOR_BGR2RGB))
+            depth_raw.tofile(os.path.join(depth_color_dir, f"_Depth_Color_{frame_idx:06}.raw"))
 
-            # Convert depth_frame to numpy array to render image in opencv
-            depth_color_image = np.asanyarray(depth_color_frame.get_data())
-
-            depth_raw_image = copy.deepcopy(depth_image)
-            depth_image = copy.deepcopy(depth_color_image)
-            depth_color_image = copy.deepcopy(depth_raw_image)
-            depth_color_filename = os.path.join(depth_color_dir, f"_Depth_Color_{frame_idx:04}.png")
-            
-            cv2.imwrite(depth_color_filename,  cv2.cvtColor(depth_color_image, cv2.COLOR_BGR2RGB))
-            depth_color_image.tofile(os.path.join(depth_color_dir, f"_Depth_Color_{frame_idx:04}.raw"))
-
-            color_filename = os.path.join(color_dir, f"_Color_{frame_idx:04}.png")
-            cv2.imwrite(color_filename,  cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB))
-            # color_image.tofile(os.path.join(color_dir, f"_Color_{frame_idx:04}.raw"))
-
-            depth_filename = os.path.join(depth_dir, f"_Depth_{frame_idx:04}.png")
-            cv2.imwrite(depth_filename, cv2.cvtColor(depth_image, cv2.COLOR_BGR2RGB))
-            # depth_image.tofile(os.path.join(depth_dir, f"_Depth_{frame_idx:04}.raw"))
-
-            print(f" Saved frame {frame_idx} -> Time{frame_idx/recorded_fps/2/60} min")
             frame_idx += 1
-
-    except RuntimeError as e:
-        print("🎬 End of rosbag reached:", e)
+            pbar.update(1)
 
     finally:
+        pbar.close()
         pipeline.stop()
-    total_frames = frame_idx
-    return intr, recorded_fps, duration, total_frames
 
-def run_ffmpeg_convert(output_prefix, framerate=6):
+    return fps
+
+def run_ffmpeg_convert(output_prefix, framerate=6, concat =True):
     import subprocess
     from natsort import natsorted
 
@@ -129,7 +262,7 @@ def run_ffmpeg_convert(output_prefix, framerate=6):
     color_images = natsorted([os.path.join(color_dir, f) for f in os.listdir(color_dir) if f.endswith(".png")])
     color_list_path = os.path.join(output_prefix, "color_list.txt")
     write_concat_list(color_images, color_list_path)
-
+    
     color_cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", color_list_path, "-vsync", "vfr",
