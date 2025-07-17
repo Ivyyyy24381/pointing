@@ -4,7 +4,9 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from glob import glob
-
+import sys
+sys.path.append('./thirdparty/sam2')
+from sam2.build_sam import build_sam2_video_predictor
 class SAM2VideoSegmenter:
     def __init__(self, video_dir):
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -37,8 +39,8 @@ class SAM2VideoSegmenter:
                 "See e.g. https://github.com/pytorch/pytorch/issues/84936 for a discussion."
             )
 
-        from sam2.build_sam import build_sam2_video_predictor
-        sam2_checkpoint = os.path.join(os.getcwd(),"segment-anything-2/checkpoints/sam2.1_hiera_large.pt")
+        
+        sam2_checkpoint = os.path.join(os.getcwd(),"thirdparty/sam2/checkpoints/sam2.1_hiera_large.pt")
         model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
         self.predictor = build_sam2_video_predictor(model_cfg, sam2_checkpoint, device=self.device)
 
@@ -102,17 +104,21 @@ class SAM2VideoSegmenter:
         fig, ax = plt.subplots()
         ax.imshow(image)
         coords = []
+        labels = []
 
         def onclick(event):
             if event.xdata is not None and event.ydata is not None:
+                label = 0 if event.button == 3 else 1  # Right-click = background (label 0), left-click = foreground (label 1)
                 coords.append((event.xdata, event.ydata))
-                ax.plot(event.xdata, event.ydata, 'go')
+                labels.append(label)
+                color = 'ro' if label == 0 else 'go'
+                ax.plot(event.xdata, event.ydata, color)
                 fig.canvas.draw()
 
         fig.canvas.mpl_connect('button_press_event', onclick)
         plt.title(f"Click to select points on {os.path.basename(frame_path)} (close window when done)")
         plt.show()
-        return coords
+        return coords, labels
 
     def interactive_segmentation(self, frame_idx=None, obj_id=1):
         self.inference_state = self.predictor.init_state(video_path=self.video_dir)
@@ -123,8 +129,7 @@ class SAM2VideoSegmenter:
         for idx in selected_frames:
             idx = int(idx)
             frame_path = os.path.join(self.video_dir, self.frame_names[idx])
-            points = self.select_points_on_image(frame_path)
-            labels = [1] * len(points)  # Assume all positive clicks
+            points, labels = self.select_points_on_image(frame_path)
             all_points.extend(points)
             all_labels.extend(labels)
 
@@ -147,7 +152,7 @@ class SAM2VideoSegmenter:
     def visualize_results(self, vis_frame_stride=1):
         # split and get the last folder
         root_dir = os.path.join(os.path.split(os.path.split(self.video_dir)[0])[0])
-        output_dir = os.path.join(os.path.split(os.path.split(self.video_dir)[0])[0], 'segmented_path')
+        output_dir = os.path.join(os.path.split(os.path.split(self.video_dir)[0])[0], 'segmented_color')
         os.makedirs(output_dir, exist_ok=True)
         plt.close("all")
         for out_frame_idx in range(0, len(self.frame_names), vis_frame_stride):
@@ -176,7 +181,8 @@ class SAM2VideoSegmenter:
             # Read first image to get frame size
             frame = cv2.imread(img_paths[0])
             height, width, _ = frame.shape
-            video_path = os.path.join(output_dir, "masked_video.mp4")
+            video_out_dir = os.path.split(output_dir)[0]
+            video_path = os.path.join(video_out_dir, "masked_video.mp4")
             writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
 
             for img_path in img_paths:
@@ -189,13 +195,19 @@ class SAM2VideoSegmenter:
 
 
 if __name__ == "__main__":
-    segmenter = SAM2VideoSegmenter("/home/xhe71/Desktop/dog_data/baby/CCD0430_side/1/Color")
+    segmenter = SAM2VideoSegmenter("/home/xhe71/Desktop/dog_data/baby/CCD0411_side/1/Color")
     segmenter.load_video_frames()
     segmenter.interactive_segmentation()
     segmenter.propagate_segmentation()
     segmenter.visualize_results()
     # Clean up temp JPEG folder if it was created
     if hasattr(segmenter, "tmp_jpeg_dir") and segmenter.tmp_jpeg_dir is not None:
+        import shutil
+        try:
+            shutil.rmtree(segmenter.tmp_jpeg_dir)
+        except Exception as e:
+            print(f"Warning: failed to remove temp JPEG dir {segmenter.tmp_jpeg_dir}: {e}")
+    if hasattr(segmenter, "segmented_path"):
         import shutil
         try:
             shutil.rmtree(segmenter.tmp_jpeg_dir)

@@ -15,10 +15,13 @@ import copy
 import argparse
 from matplotlib import cm
 import pandas as pd
+import pyrealsense2 as rs
+import yaml
+
+from types import SimpleNamespace
 # matplotlib.use('TkAgg')
 # === Paths ===
 
-import pyrealsense2 as rs
 def interpolate_trace(trace_3d):
     trace_array = np.array(trace_3d, dtype=np.float32)
     for dim in range(3):
@@ -49,6 +52,36 @@ def pixel_to_3d(u, v, depth, fx, fy, cx, cy):
     Y = (v - cy) * depth / fy
     Z = depth
     return np.array([X, Y, Z])
+
+
+def load_intrinsics_from_yaml(yaml_path):
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+
+    intr_data = data['intrinsics']
+
+    # Create a simple object to mimic RealSense intrinsics
+    intr = SimpleNamespace(
+        width=intr_data['width'],
+        height=intr_data['height'],
+        ppx=intr_data['ppx'],
+        ppy=intr_data['ppy'],
+        fx=intr_data['fx'],
+        fy=intr_data['fy'],
+        model=intr_data['model'],
+        coeffs=intr_data['coeffs']
+    )
+
+    print("Width:", intr.width)
+    print("Height:", intr.height)
+    print("PPX (cx):", intr.ppx)
+    print("PPY (cy):", intr.ppy)
+    print("FX:", intr.fx)
+    print("FY:", intr.fy)
+    print("Distortion Model:", intr.model)
+    print("Coefficients:", intr.coeffs)
+
+    return intr
 
 def find_realsense_intrinsics(bag_path):
     # === Load the bag file ===
@@ -124,7 +157,13 @@ def load_intrinsics_and_targets(json_path, side_view = False):
     for file in os.listdir(parent_dir):
         if file.endswith(".bag"):
             bag_path =  os.path.join(parent_dir, file)
-    intr = find_realsense_intrinsics(bag_path)
+            intr = find_realsense_intrinsics(bag_path)
+    if os.path.exists(os.path.join(parent_dir,"rosbag_metadata.yaml")):
+        yaml_path =  os.path.join(parent_dir,"rosbag_metadata.yaml")
+        intr = load_intrinsics_from_yaml(yaml_path)
+    else:
+        intr = load_intrinsics_from_yaml('./intrinsics.yaml')
+            
     # Load targets for later use in trace plotting and distance calculation
     current_path = os.path.dirname(os.path.abspath(__file__))
     parent_path = os.path.dirname(current_path)
@@ -139,10 +178,10 @@ def load_intrinsics_and_targets(json_path, side_view = False):
     return intr, targets, output_dir
 
 def prepare_video_and_json(output_dir, json_path, side_view):
-    output_json_path = os.path.join(output_dir, "processed_dog_result.json")
-    output_video_path = os.path.join(output_dir, "dog_annotated_video.mp4")
+    output_json_path = os.path.join(output_dir, "processed_subject_result.json")
+    output_video_path = os.path.join(output_dir, "subject_annotated_video.mp4")
     video_path = os.path.join(output_dir, "Color")
-    depth_video_path = os.path.join(output_dir, "Depth_Color")
+    depth_video_path = os.path.join(output_dir, "Depth")
     if video_path.endswith(".mp4"):
         use_image_folder = False
         cap = cv2.VideoCapture(video_path)
@@ -177,8 +216,8 @@ def select_valid_candidates(bboxes, bodyparts, confidences, width, height, side_
         if bbox == [-1.0] * 4:
             continue
         x, y, w, h = map(int, bbox)
-        x_center = x + w/2
-        y_center = y + h/2
+        x_center = x + w//2
+        y_center = y + h//2
         confidence = confidences[i]
         aspect_ratio = h / w if w > 0 else 0
 
@@ -209,19 +248,24 @@ def predict_bbox_with_optical_flow(prev_gray, frame_gray, prev_center, valid_can
     return valid_candidates
 
 def extract_trace_point(kp_cleaned, depth_frame, fx, fy, cx, cy, bbox=None):
-    if "nose" in kp_cleaned:
-        x_nose_px, y_nose_px = kp_cleaned["nose"]
-        depth = get_valid_depth(depth_frame, x_nose_px, y_nose_px)
-        if depth is not None:
-            x_center_m = (x_nose_px - cx) * depth / fx
-            y_center_m = (y_nose_px - cy) * depth / fy
-            z_center_m = depth
-            return x_center_m, y_center_m, z_center_m
+    valid_points = []
+    for name, (x_px, y_px) in kp_cleaned.items():
+        if 0 <= x_px < depth_frame.shape[1] and 0 <= y_px < depth_frame.shape[0]:
+            depth = get_valid_depth(depth_frame, x_px, y_px)
+            if depth is not None and depth > 0:
+                x_m = (x_px - cx) * depth / fx
+                y_m = (y_px - cy) * depth / fy
+                z_m = depth
+                valid_points.append((x_m, y_m, z_m))
+    if valid_points:
+        avg_point = np.mean(valid_points, axis=0)
+        return tuple(avg_point)
+    # Fallback to center of bbox if no valid keypoints
     if bbox is not None:
         x_center_px = bbox[0] + bbox[2] / 2
         y_center_px = bbox[1] + bbox[3] / 2
         depth = get_valid_depth(depth_frame, x_center_px, y_center_px)
-        if depth is not None:
+        if depth is not None and depth > 0:
             x_center_m = (x_center_px - cx) * depth / fx
             y_center_m = (y_center_px - cy) * depth / fy
             z_center_m = depth
@@ -280,7 +324,7 @@ def interpolate_distance_metrics(metrics_list):
                     metrics_list[i][key] = interpolated
     return metrics_list
 
-def save_processed_results(processed_json, fps, output_json_path, width, height, depth_frame, intrinsics, SELECTED_NAMES, per_frame_target_metrics, trace_3d):
+def save_processed_results(processed_json, fps, output_json_path, width, height, depth_frame, intrinsics, SELECTED_NAMES, per_frame_target_metrics, trace_3d, dog = True):
     """Save processed results: JSON with time and CSV table."""
     # Add timestamp and frame_index directly during CSV row creation
     processed_json_with_time = processed_json
@@ -293,12 +337,20 @@ def save_processed_results(processed_json, fps, output_json_path, width, height,
 
     # === Save flattened CSV ===
     # Define leg groups for averaging
-    leg_groups = {
-        "left_front": ["left_front_elbow", "left_front_knee", "left_front_paw"],
-        "right_front": ["right_front_elbow", "right_front_knee", "right_front_paw"],
-        "left_back": ["left_back_elbow", "left_back_knee", "left_back_paw"],
-        "right_back": ["right_back_elbow", "right_back_knee", "right_back_paw"],
-    }
+    if dog:
+        leg_groups = {
+            "left_front": ["left_front_elbow", "left_front_knee", "left_front_paw"],
+            "right_front": ["right_front_elbow", "right_front_knee", "right_front_paw"],
+            "left_back": ["left_back_elbow", "left_back_knee", "left_back_paw"],
+            "right_back": ["right_back_elbow", "right_back_knee", "right_back_paw"],
+        }
+    else:
+        leg_groups = {
+            "left_front": ["left_shoulder", "left_elbow", "left_wrist"],
+            "right_front": ["right_shoulder", "right_elbow", "right_wrist"],
+            "left_back": ["left_hip", "left_knee", "left_ankle"],
+            "right_back": ["right_hip", "right_knee", "right_ankle"],
+        }
     # --- Orientation storage for interpolation ---
     head_orients = []
     torso_orients = []
@@ -311,7 +363,7 @@ def save_processed_results(processed_json, fps, output_json_path, width, height,
             continue
         bbox = entry["bboxes"][0]
         keypoints = entry["bodyparts"][0]
-        direction = entry["dog_directions"][0] if entry["dog_directions"] else ['', '', '']
+        direction = entry["subject_directions"][0] if entry["subject_directions"] else ['', '', '']
         conf = entry["bbox_scores"][0] if entry["bbox_scores"] else None
         frame_idx = entry.get("frame_index")
         # Include local_frame_index in the row
@@ -343,7 +395,7 @@ def save_processed_results(processed_json, fps, output_json_path, width, height,
 
         # Continue building the row as before (add bbox, confidence, dog_dir, etc.)
         row.update({
-            "bbox_x": bbox[0], "bbox_y": bbox[1], "bbox_w": bbox[2], "bbox_h": bbox[3],
+            "bbox_x": int(bbox[0]), "bbox_y": int(bbox[1]), "bbox_w": (bbox[2]), "bbox_h": int(bbox[3]),
             "confidence": conf,
             "dog_dir": direction if direction is not None else ''
         })
@@ -432,9 +484,22 @@ def save_processed_results(processed_json, fps, output_json_path, width, height,
         head_orientation_3d = [None, None, None]
         torso_orientation_3d = [None, None, None]
         nose_px = joint_coords["nose"]
-        tailbase_px = joint_coords["tail_base"]
+        if dog:
 
-        for name in ["withers", "throat", "neck"]:
+            tailbase_px = joint_coords["tail_base"]
+        else:
+            if joint_coords["left_hip"]['x'] is not None:
+                tailbase_px = joint_coords["left_hip"]
+            else:
+                tailbase_px = joint_coords["right_hip"]
+
+        # Choose human or dog relevant joints
+        if dog:
+            alt_withers_keys = ["withers", "throat", "neck"]
+        else:
+            alt_withers_keys = ["left_shoulder", "right_shoulder"]  # for human torso direction
+
+        for name in alt_withers_keys:
             if name in joint_coords and joint_coords[name]["x"] is not None:
                 withers_px = joint_coords[name]
                 break
@@ -460,20 +525,29 @@ def save_processed_results(processed_json, fps, output_json_path, width, height,
         head_orients.append(head_orientation_3d)
         torso_orients.append(torso_orientation_3d)
 
-        # Orientation in pixel coordinates: use nose-withers/throat/neck for head, withers/throat/neck-tail_base for torso
+        # Orientation in pixel coordinates
         head_orientation = [None, None]
-        if kp_cleaned_for_orient.get("nose") is not None:
-            for alt_torso in ["withers", "throat", "neck"]:
-                if kp_cleaned_for_orient.get(alt_torso) is not None:
-                    head_orientation = (kp_cleaned_for_orient["nose"] - kp_cleaned_for_orient[alt_torso]).tolist()
-                    break
-        if (kp_cleaned_for_orient.get("withers") is not None or kp_cleaned_for_orient.get("throat") is not None or kp_cleaned_for_orient.get("neck") is not None) and kp_cleaned_for_orient.get("tail_base") is not None:
-            for alt_torso in ["withers", "throat", "neck"]:
-                if kp_cleaned_for_orient.get(alt_torso) is not None:
-                    torso_orientation = (kp_cleaned_for_orient[alt_torso] - kp_cleaned_for_orient["tail_base"]).tolist()
-                    break
+        torso_orientation = [None, None]
+        if dog:
+            # Head orientation: nose to withers/throat/neck
+            if kp_cleaned_for_orient.get("nose") is not None:
+                for alt_torso in ["withers", "throat", "neck"]:
+                    if kp_cleaned_for_orient.get(alt_torso) is not None:
+                        head_orientation = (kp_cleaned_for_orient["nose"] - kp_cleaned_for_orient[alt_torso]).tolist()
+                        break
+            # Torso orientation: withers/throat/neck to tail_base
+            if (kp_cleaned_for_orient.get("withers") is not None or kp_cleaned_for_orient.get("throat") is not None or kp_cleaned_for_orient.get("neck") is not None) and kp_cleaned_for_orient.get("tail_base") is not None:
+                for alt_torso in ["withers", "throat", "neck"]:
+                    if kp_cleaned_for_orient.get(alt_torso) is not None:
+                        torso_orientation = (kp_cleaned_for_orient[alt_torso] - kp_cleaned_for_orient["tail_base"]).tolist()
+                        break
         else:
-            torso_orientation = [None, None]
+            # Human head orientation: left eye to right eye
+            if kp_cleaned_for_orient.get("left_eye") is not None and kp_cleaned_for_orient.get("right_eye") is not None:
+                head_orientation = (kp_cleaned_for_orient["left_eye"] - kp_cleaned_for_orient["right_eye"]).tolist()
+            # Human torso orientation: left shoulder to right shoulder
+            if kp_cleaned_for_orient.get("left_shoulder") is not None and kp_cleaned_for_orient.get("right_shoulder") is not None:
+                torso_orientation = (kp_cleaned_for_orient["left_shoulder"] - kp_cleaned_for_orient["right_shoulder"]).tolist()
 
         row["head_orientation_x"], row["head_orientation_y"] = head_orientation
         row["torso_orientation_x"], row["torso_orientation_y"] = torso_orientation
@@ -521,8 +595,7 @@ def save_processed_results(processed_json, fps, output_json_path, width, height,
         # Save the trace_3d coordinates if available
         if i < len(trace_3d):
             row["trace3d_x"], row["trace3d_y"], row["trace3d_z"] = trace_3d[i]
-        else:
-            row["trace3d_x"], row["trace3d_y"], row["trace3d_z"] = [None, None, None]
+        
         records.append(row)
 
     df = pd.DataFrame(records)
@@ -565,7 +638,6 @@ def plot_trace_and_targets(trace_3d, targets, output_json_path, fps, side_view )
             dy = a['y'] - b['y']
             dz = a['z'] - b['z']
             d = np.sqrt(dx**2 + dy**2 + dz**2)
-            print(f"{a['label']} <-> {b['label']}: {d:.3f} m")
         x, y, z = item["x"], item["y"], item["z"]
         label = item.get("label", "")
         if label == "human":
@@ -615,12 +687,34 @@ def plot_trace_and_targets(trace_3d, targets, output_json_path, fps, side_view )
     set_axes_equal(ax)
     trace_path = output_json_path.replace(".json", "_trace3d.png")
     plt.savefig(trace_path)
+    plt.close()
     print(f"3D trace saved to: {trace_path}")
+
+    # === Add a 2D X-Z plot ===
+    fig2, ax2 = plt.subplots()
+    for i in range(1, len(trace_3d)):
+        ax2.plot(trace_3d[i-1:i+1, 0], trace_3d[i-1:i+1, 2], '.', color=colors[i], alpha=0.8)
+    for item in targets:
+        x, z = item["x"], item["z"]
+        label = item.get("label", "")
+        if label == "human":
+            ax2.scatter(x, z, c='blue', s=80, marker='x', label='Human')
+        else:
+            ax2.scatter(x, z, c='gray', s=80, label=label)
+        ax2.text(x, z + 0.05, label, color='black', fontsize=8)
+    ax2.set_title("Dog Trace in 2D (X-Z Plane)")
+    ax2.set_xlabel("X (meters)")
+    ax2.set_ylabel("Depth Z (meters)")
+    ax2.grid(True)
+
+    # Save figure
+    trace_plot_path = output_json_path.replace(".json", "_trace.png")
+    fig2.savefig(trace_plot_path)
+    plt.close()
+    print(f"✅ Saved 2D trace plot to: {trace_plot_path}")
 
 def plot_distance_comparison(per_frame_target_metrics, targets, output_json_path, fps):
     """Plot distance to each target over time."""
-    import matplotlib.pyplot as plt
-    import numpy as np
     if per_frame_target_metrics:
         times = np.linspace(0, len(per_frame_target_metrics) / fps , len(per_frame_target_metrics))
         fig, ax = plt.subplots()
@@ -631,17 +725,18 @@ def plot_distance_comparison(per_frame_target_metrics, targets, output_json_path
                 ax.plot(times, dists, label='human', color='gray', linestyle='--')
             else:
                 ax.plot(times, dists, label=label)
-        ax.set_xlabel('Time (seconds)')
+        ax.set_xlabel('Frames (idx)')
         ax.set_ylabel('Distance to Target (meters)')
         ax.set_title('Dog Distance to Each Target Over Time')
         ax.legend()
         plt.grid(True)
         dist_plot_path = output_json_path.replace(".json", "_distance_comparison.png")
         plt.savefig(dist_plot_path)
+        plt.close()
         print(f"Saved distance comparison plot to: {dist_plot_path}")
 
 
-def pose_visualize(json_path, side_view = False):
+def pose_visualize(json_path, side_view = False, dog= True):
     prev_gray = None
     prev_center = None
     smoothed_bbox = None
@@ -654,49 +749,19 @@ def pose_visualize(json_path, side_view = False):
         num_images = len(color_files)
         num_json = len(json_data)
         if num_json != num_images:
-            import numpy as np
             print(f"Resampling JSON data: {num_json} entries → {num_images} frames")
             indices = np.linspace(0, num_json - 1, num=num_images).astype(int)
             json_data = [json_data[i] for i in indices]
 
     transform_matrix = load_side_to_front_transform() if side_view else np.eye(4)
-
-    SELECTED_NAMES = {
-        "nose": 0,
-        "right_eye": 5,
-        "right_ear_base": 6,
-        "right_ear_tip": 7,
-        "left_eye": 10,
-        "left_ear_base": 11,
-        "left_ear_tip": 12,
-        "throat": 17,
-        "neck": 15, 
-        "withers": 19,
-        "tail_base": 22,
-        "tail_tip": 23,
-        "left_front_elbow": 24,
-        "left_front_knee": 25,
-        "left_front_paw": 26,
-        "right_front_elbow": 27,
-        "right_front_knee": 28,
-        "right_front_paw": 29,
-        "left_back_elbow": 30,
-        "left_back_knee": 31,
-        "left_back_paw": 32,
-        "right_back_elbow": 33,
-        "right_back_knee": 34,
-        "right_back_paw": 35
-    }
-    SKELETON = [
-        ("nose", "right_eye"), ("nose", "left_eye"),
-        ("right_eye", "right_ear_base"), ("left_eye", "left_ear_base"),
-        ("right_ear_base", "right_ear_tip"), ("left_ear_base", "left_ear_tip"),
-        ("nose", "throat"), ("throat", "withers"), ("withers", "tail_base"),
-        ("withers", "left_front_elbow"), ("left_front_elbow", "left_front_knee"), ("left_front_knee", "left_front_paw"),
-        ("withers", "right_front_elbow"), ("right_front_elbow", "right_front_knee"), ("right_front_knee", "right_front_paw"),
-        ("tail_base", "left_back_elbow"), ("left_back_elbow", "left_back_knee"), ("left_back_knee", "left_back_paw"),
-        ("tail_base", "right_back_elbow"), ("right_back_elbow", "right_back_knee"), ("right_back_knee", "right_back_paw")
-    ]
+    with open("./config/skeleton_config.json", "r") as f:
+        skeleton_data = json.load(f)
+    if dog:
+        SELECTED_NAMES = skeleton_data["dog"]["SELECTED_NAMES"]
+        SKELETON = skeleton_data["dog"]["SKELETON"] 
+    else:
+        SELECTED_NAMES = skeleton_data["human"]["SELECTED_NAMES"]
+        SKELETON = skeleton_data["human"]["SKELETON"]
 
     processed_json = []
     trace_3d = []
@@ -706,7 +771,6 @@ def pose_visualize(json_path, side_view = False):
     fx, fy = intr.fx, intr.fy
     cx, cy = intr.ppx, intr.ppy
     per_frame_target_metrics = []
-    detection_started_flag = False
     missing_frame_count = 0
     last_color_frame = None
     last_depth_frame = None
@@ -718,7 +782,6 @@ def pose_visualize(json_path, side_view = False):
             frame = cv2.imread(os.path.join(video_path, color_files[frame_idx]))
             raw_path = os.path.join(depth_video_path, depth_files[frame_idx])
             with open(raw_path, 'rb') as f:
-                import numpy as np
                 raw = np.frombuffer(f.read(), dtype=np.uint16).reshape((height, width))
                 depth_frame = raw / 1000
             ret = True
@@ -741,72 +804,50 @@ def pose_visualize(json_path, side_view = False):
         bodyparts = entry.get("bodyparts", [])
         confidences = entry.get("bbox_scores", [1.0] * len(bboxes))
 
-        # if side_view:
-        #     # Skip filtering: treat all detections as valid
-        #     valid_candidates = list(zip(range(len(bboxes)), bboxes, bodyparts, confidences))
         # else:
         valid_candidates = select_valid_candidates(bboxes, bodyparts, confidences, width, height, side_view)
         if not valid_candidates:
-            if not detection_started_flag:
-                # Haven't started detection yet → skip this frame
+            # Always append a NaN trace point and empty metrics, even if detection fails
+            trace_3d.append([np.nan, np.nan, np.nan])
+            per_frame_target_metrics.append({})
+            # Detection started, but now missing detection → use last_valid
+            if last_valid and last_valid["bboxes"]:
+                interpolated_bbox = last_valid["bboxes"][0]
+                interpolated_keypoints = last_valid["bodyparts"][0]
+                interpolated_conf = last_valid["bbox_scores"][0]
+                processed_json.append({
+                    "frame_index": frame_idx + start_frame_idx,
+                    "local_frame_index": frame_idx,
+                    "bboxes": [interpolated_bbox],
+                    "bodyparts": [interpolated_keypoints],
+                    "subject_directions": last_valid.get("dog_directions", []),
+                    "bbox_scores": [interpolated_conf]
+                })
+                # Draw interpolated box
+                x, y, w, h = map(int, interpolated_bbox)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
+                cv2.putText(frame, 'Interpolated', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+            else:
                 processed_json.append({
                     "frame_index": frame_idx + start_frame_idx,
                     "local_frame_index": frame_idx,
                     "bboxes": [],
                     "bodyparts": [],
-                    "dog_directions": [],
-                    "bbox_scores": [],
-                    "interpolated_bbox": 1,
-                    "interpolated_keypoints": 1,
-                    "interpolated_distances": 1
+                    "subject_directions": [],
+                    "bbox_scores": []
                 })
-                out.write(frame)
-                # Increment missing frame counter
-                missing_frame_count += 1
-                # frame_idx += 1
-                continue
-            else:
-                # Detection started, but now missing detection → use last_valid
-                if last_valid and last_valid["bboxes"]:
-                    interpolated_bbox = last_valid["bboxes"][0]
-                    interpolated_keypoints = last_valid["bodyparts"][0]
-                    interpolated_conf = last_valid["bbox_scores"][0]
-                    processed_json.append({
-                        "frame_index": frame_idx + start_frame_idx,
-                        "local_frame_index": frame_idx,
-                        "bboxes": [interpolated_bbox],
-                        "bodyparts": [interpolated_keypoints],
-                        "dog_directions": last_valid.get("dog_directions", []),
-                        "bbox_scores": [interpolated_conf]
-                    })
-                    # Draw interpolated box
-                    x, y, w, h = map(int, interpolated_bbox)
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
-                    cv2.putText(frame, 'Interpolated', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
-                else:
-                    processed_json.append({
-                        "frame_index": frame_idx + start_frame_idx,
-                        "local_frame_index": frame_idx,
-                        "bboxes": [],
-                        "bodyparts": [],
-                        "dog_directions": [],
-                        "bbox_scores": []
-                    })
-                # Fallback: use last_color_frame if available for output
-                frame = last_color_frame.copy() if 'last_color_frame' in locals() and last_color_frame is not None else frame
-                out.write(frame)
-                # Increment missing frame counter
-                missing_frame_count += 1
-                if side_view and missing_frame_count >= 5:
-                    detection_started_flag = False
-                    print(f"Side view: detection stopped after {missing_frame_count} consecutive missing frames at frame {frame_idx}")
-                # frame_idx += 1
-                continue
+            # Fallback: use last_color_frame if available for output
+            frame = last_color_frame.copy() if 'last_color_frame' in locals() and last_color_frame is not None else frame
+            out.write(frame)
+            # Increment missing frame counter
+            missing_frame_count += 1
+            if side_view and missing_frame_count >= 5:
+                print(f"Side view: detection stopped after {missing_frame_count} consecutive missing frames at frame {frame_idx}")
+            # frame_idx += 1
+            continue
         
         # Found a valid candidate, reset missing frame counter
         missing_frame_count = 0
-        detection_started_flag = True
-
         valid_candidates = predict_bbox_with_optical_flow(prev_gray, frame_gray, prev_center, valid_candidates)
         _, bbox, keypoints, conf = valid_candidates[0]
 
@@ -816,6 +857,9 @@ def pose_visualize(json_path, side_view = False):
             deviation = np.linalg.norm(np.array(candidate_center) - np.array(smoothed_center))
             if deviation > max_deviation:
                 print(f"Skipping frame {frame_idx} due to large bbox deviation: {deviation:.2f}")
+                # Always append a NaN trace point and empty metrics, even if skipping due to deviation
+                trace_3d.append([np.nan, np.nan, np.nan])
+                per_frame_target_metrics.append({})
                 # frame_idx += 1
                 continue
         if smoothed_bbox is None:
@@ -828,6 +872,7 @@ def pose_visualize(json_path, side_view = False):
         kp = np.array(keypoints)
         kp_cleaned = {}
         for name, idx in SELECTED_NAMES.items():
+            
             if idx < len(kp) and kp[idx][2] > 0.1:
                 pt = tuple(np.round(kp[idx][:2]).astype(int))
                 kp_cleaned[name] = pt
@@ -848,24 +893,23 @@ def pose_visualize(json_path, side_view = False):
 
         x_center_m, y_center_m, z_center_m = extract_trace_point(kp_cleaned, depth_frame, fx, fy, cx, cy, smoothed_bbox)
         if (x_center_m, y_center_m, z_center_m) != (0, 0, 0):
-            # # uncomment for transformation to align with front camera frame
-            # point_cam = np.array([x_center_m, y_center_m, z_center_m, 1.0])
-            # point_transformed = transform_matrix @ point_cam
-            # trace_3d.append(point_transformed[:3])
-            # frame_target_metrics = compute_target_distances(*point_transformed[:3], targets)
+            if not side_view:
+                # uncomment for transformation to align with front camera frame
+                point_cam = np.array([x_center_m, y_center_m, z_center_m, 1.0])
+                point_transformed = transform_matrix @ point_cam
+                trace_3d.append(point_transformed[:3])
+                frame_target_metrics = compute_target_distances(*point_transformed[:3], targets)
             trace_3d.append([x_center_m, y_center_m, z_center_m])
             frame_target_metrics = compute_target_distances(x_center_m, y_center_m, z_center_m, targets, include_human=True)
             distances = [v for k, v in frame_target_metrics.items() if k.endswith('_r')]
             if distances:
                 min_dist = min(distances)
-                print(f"Frame {frame_idx}: {' | '.join(f'{d:.2f}' for d in distances)}, Minimum Euclidean distance to a target = {min_dist:.3f} meters")
+                # print(f"Frame {frame_idx}: {' | '.join(f'{d:.2f}' for d in distances)}, Minimum Euclidean distance to a target = {min_dist:.3f} meters")
             per_frame_target_metrics.append(frame_target_metrics)
         else:
-            # Append empty dictionary to maintain alignment for plotting and CSV
+            # Append NaNs to keep frame alignment
             trace_3d.append([np.nan, np.nan, np.nan])
-            frame_target_metrics = {}
             per_frame_target_metrics.append({})
-                
 
         # Update last_valid before appending
         last_valid = {
@@ -873,7 +917,7 @@ def pose_visualize(json_path, side_view = False):
             "local_frame_index": frame_idx,
             "bboxes": [smoothed_bbox],
             "bodyparts": [[kp[idx].tolist() if isinstance(kp[idx], np.ndarray) else kp[idx] for name, idx in SELECTED_NAMES.items()]],
-            "dog_directions": [dog_dir],
+            "subject_directions": [dog_dir],
             "bbox_scores": [conf],
             "target_metrics": frame_target_metrics if (x_center_m, y_center_m, z_center_m) != (0, 0, 0) else {},
             "interpolated_bbox": 0,
@@ -899,7 +943,7 @@ def pose_visualize(json_path, side_view = False):
     for i in range(len(processed_json)):
         if i < len(per_frame_target_metrics):
             processed_json[i]["target_metrics"] = per_frame_target_metrics[i]
-    save_processed_results(processed_json, fps, output_json_path, width, height, depth_frame, intr, SELECTED_NAMES, per_frame_target_metrics, trace_3d)
+    save_processed_results(processed_json, fps, output_json_path, width, height, depth_frame, intr, SELECTED_NAMES, per_frame_target_metrics, trace_3d, dog=dog)
     plot_trace_and_targets(trace_3d, targets, output_json_path, fps, side_view)
     plot_distance_comparison(per_frame_target_metrics, targets, output_json_path, fps)
 
@@ -914,14 +958,14 @@ def main():
         args = parser.parse_args()
         json_path = args.json_path 
     except:
-        json_path = "dog_data/BDL204_Waffle/3/Color_superanimal_quadruped_fasterrcnn_resnet50_fpn_v2_hrnet_w32_before_adapt.json"
+        json_path = "/home/xhe71/Desktop/dog_data/baby/CCD0442_side/1/masked_video_skeleton.json"
     
     # video_path = args.video_path
     # depth_video_path = args.depth_video
-    json_path = "dog_data/BDL204_Waffle/3/Color_superanimal_quadruped_fasterrcnn_resnet50_fpn_v2_hrnet_w32_before_adapt.json"
+    json_path = "/home/xhe71/Desktop/dog_data/baby/CCD0442_side/1/masked_video_skeleton.json"
     # video_path = "/home/xhe71/Desktop/dog_data/BDL204_Waffle/2/Color.mp4"
     # depth_video_path = "/home/xhe71/Desktop/dog_data/BDL204_Waffle/2/Depth.mp4"
-    pose_visualize(json_path, side_view=args.side_view)
+    pose_visualize(json_path, side_view = True, dog = False)
 
 
 if __name__ == "__main__":

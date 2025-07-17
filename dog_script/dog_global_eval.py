@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d import art3d
 import json
 import re
 
-root_dir = "dog_data/BDL127_Kenzi_side/"
+root_dir = "dog_data/dog/BDL222_Ollie_side/"
 dog_match = re.search(r'(BDL\d+)', root_dir)
 dog_id = dog_match.group(1) if dog_match else None
 metadata_csv = 'PVP_Comprehension_Data.csv'
@@ -53,7 +53,7 @@ for folder in all_folders:
     # Extract just the folder name (e.g., "1" from ".../1/")
     folder_name = os.path.basename(folder)
     if folder_name.isdigit():   # Only if folder is a number
-        csv_path = os.path.join(folder, "processed_dog_result_table_with_metadata.csv")
+        csv_path = os.path.join(folder, "processed_subject_result_table.csv")
         if os.path.exists(csv_path):
             all_csvs.append(csv_path)
 

@@ -18,14 +18,9 @@ dog_data/
 visualize/__pycache__/gesture_detection.cpython-312.pyc
 code/__pycache__/bag_to_video.cpython-312.pyc
 code/__pycache__/batch_split_bag.cpython-312.pyc
+thirdparty/
 .DS_Store
 *.pyc
 *.DS_Store
 *.png
 *.jpg
-*.mov
-*.mp4
-*.csv
-*.h5
-*.json
-*.pt

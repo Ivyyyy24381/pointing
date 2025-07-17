@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.append('visualize')
+sys.path.append('gesture')
 from gesture_detection import PointingGestureDetector  # Update this import path based on your file structure
 import os
 import sys

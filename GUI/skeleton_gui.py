@@ -8,9 +8,8 @@ import os
 import pandas as pd
 import sys
 sys.path.append('./')  
-sys.path.append('visualize')# Adjust this path based on your project structure
+sys.path.append('gesture')# Adjust this path based on your project structure
 from gesture_data_process import GestureDataProcessor
-from gesture_detection import PointingGestureDetector
 from batch_point_production import run_gesture_detection
 class VideoTrimmerGUI:
     INTRINSICS_PATH = "config/camera_config.yaml"
@@ -198,3 +197,45 @@ if __name__ == "__main__":
             app.load_video_path(clean_input)
 
     root.mainloop()
+    # After GUI loop, concatenate all processed_gesture_data.csv files
+    import pandas as pd
+
+    if len(sys.argv) > 1:
+        root_folder = unquote(" ".join(sys.argv[1:]).strip('"'))
+        if os.path.isdir(root_folder):
+            all_data = []
+            for subdir, _, _ in os.walk(root_folder):
+                csv_path = os.path.join(subdir, "processed_gesture_data.csv")
+                if os.path.exists(csv_path):
+                    try:
+                        df = pd.read_csv(csv_path)
+                        path_parts = os.path.normpath(subdir).split(os.sep)
+                        if len(path_parts) >= 2:
+                            df["dog"] = path_parts[-2]
+                            df["trial"] = path_parts[-1]
+                        else:
+                            df["dog"] = "unknown"
+                            df["trial"] = os.path.basename(subdir)
+                        all_data.append(df)
+                    except Exception as e:
+                        print(f"❌ Failed to read {csv_path}: {e}")
+            if all_data:
+                combined_df = pd.concat(all_data, ignore_index=True)
+                # Reorder columns to put 'dog' and 'trial' first
+                cols = combined_df.columns.tolist()
+                if 'dog' in cols and 'trial' in cols:
+                    cols.remove('dog')
+                    cols.remove('trial')
+                    combined_df = combined_df[['dog', 'trial'] + cols]
+                
+                # Sort by 'trial' column (converted to numeric if possible)
+                try:
+                    combined_df['trial_numeric'] = pd.to_numeric(combined_df['trial'], errors='coerce')
+                    combined_df = combined_df.sort_values(by=['trial_numeric', 'frame']).drop(columns=['trial_numeric'])
+                except Exception as e:
+                    print(f"⚠️ Failed to sort by trial: {e}")
+                save_path = os.path.join(root_folder, f"{path_parts[-2]}_gesture_data.csv")
+                combined_df.to_csv(save_path, index=False)
+                print(f"✅ Saved combined data to {save_path}")
+            else:
+                print("⚠️ No processed_gesture_data.csv files found.")

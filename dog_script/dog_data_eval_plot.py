@@ -455,12 +455,13 @@ def plot_trace(csv_path, dog_name, dog_id, trial_number = None, side_view = True
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    dog_name = 'Kenzi'
-    dog_id = 'BDL127'
+    subject = 'dog'
+    dog_name = 'Ollie'
+    dog_id = 'BDL222'
     trial_number = 10
-    start_time = 3
-    end_time = 4.5
-    parser.add_argument("--csv", type=str, default = f'dog_data/{dog_id}_{dog_name}_side/{trial_number}/processed_dog_result_table.csv', help="Path to the processed dog CSV file")
+    start_time = 0
+    end_time = 200
+    parser.add_argument("--csv", type=str, default = f'/home/xhe71/Desktop/dog_data/dog/BDL222_Ollie_side/3/processed_subject_result_table.csv', help="Path to the processed dog CSV file")
     parser.add_argument("--start", type=float, default=start_time, help="Start time in seconds")
     parser.add_argument("--end", type=float, default=end_time, help="Start time in seconds")
     parser.add_argument("--side_view", action="store_true", help="Use side view to select config JSON")

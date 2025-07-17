@@ -9,8 +9,8 @@ import threading
 from queue import Queue, Empty
 from collections import deque
 import time
-sys.path.append('code/')
-from bag_to_video import run_rs_convert, run_ffmpeg_convert, concat_videos
+sys.path.append('rosbag_script/')
+from bag_to_video import run_rs_convert, run_ffmpeg_convert
 from batch_split_bag import generate_and_run_commands
 from shutil import copy2
 import shutil
@@ -322,7 +322,7 @@ class RosbagSlicerGUI:
 
                 self.status_label.config(text="Concatenating videos...")
                 self.progress_bar['value'] = 90
-                concat_videos(color_video_path, depth_video_path, output_video_path)
+                # concat_videos(color_video_path, depth_video_path, output_video_path)
 
                 self.progress_bar['value'] = 100
                 # messagebox.showinfo("Success", f"Video processed and saved in {output_folder}")
@@ -344,23 +344,23 @@ class RosbagSlicerGUI:
         print(f"Copying frames from {start_frame} to {end_frame - 1} into {out_dir}")
 
         for idx in range(start_frame, end_frame):
-            color_src = os.path.join(color_dir, f"_Color_{idx:06d}.png")
-            depth_src = os.path.join(depth_dir, f"_Depth_{idx:06d}.png")
-            depth_color_src = os.path.join(depth_color_dir, f"_Depth_Color_{idx:06d}.png")
+            color_src = os.path.join(color_dir, f"Color_{idx:06d}.png")
+            depth_src = os.path.join(depth_dir, f"Depth_{idx:06d}.png")
+            depth_color_src = os.path.join(depth_color_dir, f"Depth_Color_{idx:06d}.png")
 
             # RAW files (adjust extensions/names as needed)
-            color_raw_src = os.path.join(color_dir, f"_Color_{idx:06d}.raw")
-            depth_raw_src = os.path.join(depth_dir, f"_Depth_{idx:06d}.raw")
-            depth_color_raw_src = os.path.join(depth_color_dir, f"_Depth_Color_{idx:06d}.raw")
+            color_raw_src = os.path.join(color_dir, f"Color_{idx:06d}.raw")
+            depth_raw_src = os.path.join(depth_dir, f"Depth_{idx:06d}.raw")
+            depth_color_raw_src = os.path.join(depth_color_dir, f"Depth_Color_{idx:06d}.raw")
 
             # Destinations
-            color_dst = os.path.join(out_dir, "Color", f"_Color_{idx:06d}.png")
-            depth_dst = os.path.join(out_dir, "Depth", f"_Depth_{idx:06d}.png")
-            depth_color_dst = os.path.join(out_dir, "Depth_Color", f"_Depth_Color_{idx:06d}.png")
+            color_dst = os.path.join(out_dir, "Color", f"Color_{idx:06d}.png")
+            depth_dst = os.path.join(out_dir, "Depth", f"Depth_{idx:06d}.png")
+            depth_color_dst = os.path.join(out_dir, "Depth_Color", f"Depth_Color_{idx:06d}.png")
 
-            color_raw_dst = os.path.join(out_dir, "Color",  f"_Color_{idx:06d}.raw")
-            depth_raw_dst = os.path.join(out_dir, "Depth",  f"_Depth_{idx:06d}.raw")
-            depth_color_raw_dst = os.path.join(out_dir, "Depth_Color",f"_Depth_Color_{idx:06d}.raw")
+            color_raw_dst = os.path.join(out_dir, "Color",  f"Color_{idx:06d}.raw")
+            depth_raw_dst = os.path.join(out_dir, "Depth",  f"Depth_{idx:06d}.raw")
+            depth_color_raw_dst = os.path.join(out_dir, "Depth_Color",f"Depth_Color_{idx:06d}.raw")
 
             # Copy images
             if os.path.exists(color_src):
@@ -433,7 +433,7 @@ class RosbagSlicerGUI:
 
                     color_video_path = os.path.join(out_path, "Color.mp4")
                     depth_video_path = os.path.join(out_path, "Depth.mp4")
-                    concat_videos(color_video_path, depth_video_path, os.path.join(out_path, "output.mp4"))
+                    # concat_videos(color_video_path, depth_video_path, os.path.join(out_path, "output.mp4"))
 
                     self.progress_bar['value'] += 1
 
