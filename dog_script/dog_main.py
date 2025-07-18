@@ -89,5 +89,5 @@ if __name__ == "__main__":
     parser.add_argument("--side_view", action='store_true', help="Flag to indicate if this is the side view")
     args = parser.parse_args()
     # process_dog(os.path.expanduser(args.root_path), side_view=args.side_view)
-    # process_dog(os.path.expanduser(args.root_path), side_view=True)
+    process_dog(os.path.expanduser(args.root_path), side_view=True)
     concatenate_processed_results(os.path.expanduser(args.root_path))
