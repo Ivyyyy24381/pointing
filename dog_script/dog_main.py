@@ -85,7 +85,7 @@ def concatenate_processed_results(root_folder):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root_path", type=str, default='/home/xhe71/Desktop/dog_data/dog/BDL222_Ollie_side/', help="Path to the root dog video dataset directory")
+    parser.add_argument("--root_path", type=str, default='/home/xhe71/Desktop/dog_data/baby/CCD0384_PVPT_004E_side/', help="Path to the root dog video dataset directory")
     parser.add_argument("--side_view", action='store_true', help="Flag to indicate if this is the side view")
     args = parser.parse_args()
     # process_dog(os.path.expanduser(args.root_path), side_view=args.side_view)

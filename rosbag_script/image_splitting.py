@@ -139,66 +139,45 @@ if not bag_folders:
 # inside every subfolder of the provided directory, go in and search for rosbag
 path_lists = os.listdir(bag_folders)
 
-for path in sorted(path_lists):
-    full_path = os.path.join(bag_folders, path)
-    if os.path.isdir(full_path):
-        rosbag_files = [f for f in os.listdir(full_path) if f.endswith('.bag')]
-        if rosbag_files:
-            rosbag_path = os.path.join(full_path, rosbag_files[0])
-            color_dir = os.path.join(full_path, 'Color')
-            depth_dir = os.path.join(full_path, 'Depth')
-            depth_color_dir = os.path.join(full_path, 'Depth_Color')
-            start_sec = 0
-            end_sec = 1000000
-            
-            print(f"Processing rosbag file: {rosbag_path}")
-            if not os.path.exists(os.path.join(full_path, 'Color')):
-            
-                recored_fps = run_rs_convert(rosbag_path, full_path,start_sec, end_sec)
-                run_ffmpeg_convert(full_path, framerate = recored_fps)
-                time.sleep(3)
-                # remove rosbag
-                os.remove(rosbag_path)
 
 for path in sorted(path_lists):
     full_path = os.path.join(bag_folders, path)
+
     if os.path.isdir(full_path):
-        rosbag_files = [f for f in os.listdir(full_path) if f.endswith('.bag')]
-        if rosbag_files:
-            rosbag_path = os.path.join(full_path, rosbag_files[0])
-            color_dir = os.path.join(full_path, 'Color')
-            depth_dir = os.path.join(full_path, 'Depth')
-            depth_color_dir = os.path.join(full_path, 'Depth_Color')
-            start_sec = 0
-            end_sec = 1000000
+
+        color_dir = os.path.join(full_path, 'Color')
+        depth_dir = os.path.join(full_path, 'Depth')
+        depth_color_dir = os.path.join(full_path, 'Depth_Color')
+        start_sec = 0
+        end_sec = 1000000
             
-        if not os.path.exists(os.path.join(full_path,'auto_split.csv')) or not os.path.exists(os.path.join(full_path, '5')):
-            if not os.path.exists(os.path.join(full_path, 'auto_split.csv')):
-                print("No auto_split.csv found, marking frames...")
-                input("Press Enter to start marking frames...")
-                play_and_mark_frames(os.path.join(full_path, 'Color'), 
-                output_csv=os.path.join(full_path, 'auto_split.csv'))
-        
-            df = pd.read_csv(os.path.join(full_path, 'auto_split.csv'))
-            # Step 2: Loop through CSV, slice frames
-            for i, row in df.iterrows():
-                start_frame = int(row['start_seconds'])  # assuming seconds == frames
-                end_frame = int(row['end_seconds'])
-                index = i + 1
-                out_path = os.path.join(full_path, str(index))
-                os.makedirs(out_path, exist_ok=True)
+        if os.path.exists(os.path.join(full_path, 'Color')):
+            if not os.path.exists(os.path.join(full_path,'auto_split.csv')) or not os.path.exists(os.path.join(full_path, '5')):
+                if not os.path.exists(os.path.join(full_path, 'auto_split.csv')):
+                    print("No auto_split.csv found, marking frames...")
+                    input("Press Enter to start marking frames...")
+                    play_and_mark_frames(os.path.join(full_path, 'Color'), 
+                    output_csv=os.path.join(full_path, 'auto_split.csv'))
+            
+                df = pd.read_csv(os.path.join(full_path, 'auto_split.csv'))
+                # Step 2: Loop through CSV, slice frames
+                for i, row in df.iterrows():
+                    start_frame = int(row['start_seconds'])  # assuming seconds == frames
+                    end_frame = int(row['end_seconds'])
+                    index = i + 1
+                    out_path = os.path.join(full_path, str(index))
+                    os.makedirs(out_path, exist_ok=True)
 
-                copy_frame_range(color_dir, depth_dir, depth_color_dir, out_path, start_frame, end_frame)
+                    copy_frame_range(color_dir, depth_dir, depth_color_dir, out_path, start_frame, end_frame)
 
-                run_ffmpeg_convert(out_path, framerate=6)
-                color_video_path = os.path.join(out_path, "Color.mp4")
-                depth_video_path = os.path.join(out_path, "Depth.mp4")
+                    run_ffmpeg_convert(out_path, framerate=6)
+                    color_video_path = os.path.join(out_path, "Color.mp4")
+                    depth_video_path = os.path.join(out_path, "Depth.mp4")
+                    
                 
-            
-            print(f"Processed rosbag file: {rosbag_path}")
-            
-        else:
-            print(f"No rosbag files found in {full_path}.")
+                
+            else:
+                print(f"No rosbag files found in {full_path}.")
     else:
         print(f"{full_path} is not a directory.")
 
