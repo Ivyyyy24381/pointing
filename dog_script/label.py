@@ -44,7 +44,7 @@ def select_points_on_image(frame_path, scale_factor):
             fig.canvas.draw()
 
     fig.canvas.mpl_connect('button_press_event', onclick)
-    plt.title(f"Click points on {os.path.basename(frame_path)} (Close when done)")
+    plt.title(f"Click points on {os.path.basename(frame_path)} Right click to exclude objects and left click to select objects(Close when done)")
     plt.show()
     return coords, labels
 

@@ -126,10 +126,10 @@ def find_targets(base_dir):
     color_path = os.path.join(trial_path, "Color", f"Color_{frame}.png")
     depth_path = os.path.join(trial_path, "Depth", f"Depth_{frame}.raw")
     metadata_yaml = os.path.join(base_folder, "rosbag_metadata.yaml")
-    output_json = os.path.join(trial_path, "targets.json")
+    output_json = os.path.join(base_folder, "targets.json")
 
     calibrate_targets(color_path, depth_path, metadata_yaml, output_json)
 
 if __name__ == "__main__":
-    base_dir = "/home/xhe71/Desktop/dog_data/baby/CCD0495_PVPT_026E_side"
+    base_dir = input("Enter the base directory containing trials: ").strip()
     find_targets(base_dir)
