@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from glob import glob
 import sys
+import json
 sys.path.append('./thirdparty/sam2')
 from sam2.build_sam import build_sam2_video_predictor
 class SAM2VideoSegmenter:
@@ -18,6 +19,8 @@ class SAM2VideoSegmenter:
         self.plt = plt
         self.Image = Image
         self.video_dir = video_dir
+        self.color_dir = os.path.split(self.video_dir)[0]
+        self.max_size = 360
 
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
@@ -43,6 +46,9 @@ class SAM2VideoSegmenter:
         sam2_checkpoint = os.path.join(os.getcwd(),"thirdparty/sam2/checkpoints/sam2.1_hiera_large.pt")
         model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
         self.predictor = build_sam2_video_predictor(model_cfg, sam2_checkpoint, device=self.device)
+        # Store scaling factors per frame
+        self.scale_factors = {}
+
 
 
     @staticmethod
@@ -73,30 +79,51 @@ class SAM2VideoSegmenter:
         w, h = box[2] - box[0], box[3] - box[1]
         ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0, 0, 0, 0), lw=2))
 
-
     def load_video_frames(self):
-        # Support for .png input folders: convert PNGs to JPEGs in a temp folder if needed
+        """Loads frames, converts to JPEG if needed, downsizes, and samples if too many frames."""
+        from PIL import Image
         import shutil
-        png_files = [p for p in os.listdir(self.video_dir) if os.path.splitext(p)[-1].lower() == ".png"]
-        jpg_files = [p for p in os.listdir(self.video_dir) if os.path.splitext(p)[-1].lower() in [".jpg", ".jpeg"]]
+        
+        png_files = [p for p in os.listdir(self.video_dir) if p.lower().endswith(".png")]
+        jpg_files = [p for p in os.listdir(self.video_dir) if p.lower().endswith((".jpg", ".jpeg"))]
         self.tmp_jpeg_dir = None
+        self.scale_factors = {}
+
+        # Convert PNG → downscaled JPEG
         if png_files and not jpg_files:
-            # Create temp JPEG folder
-            import tempfile
             self.tmp_jpeg_dir = os.path.join(self.video_dir, "_tmp_jpegs")
             os.makedirs(self.tmp_jpeg_dir, exist_ok=True)
-            for png_file in png_files:
-                src_path = os.path.join(self.video_dir, png_file)
-                dst_name = os.path.splitext(png_file)[0] + ".jpg"
-                dst_path = os.path.join(self.tmp_jpeg_dir, dst_name)
-                img = self.Image.open(src_path).convert("RGB")
-                img.save(dst_path, "JPEG")
+            for fname in sorted(png_files):
+                src = os.path.join(self.video_dir, fname)
+                img = Image.open(src).convert("RGB")
+                orig_w, orig_h = img.size
+                img.thumbnail((self.max_size, self.max_size))  # 🔹 downscale
+                new_w, new_h = img.size
+                self.scale_factors[fname.replace(".png", ".jpg")] = (orig_w / new_w, orig_h / new_h)
+                img.save(os.path.join(self.tmp_jpeg_dir, fname.replace(".png", ".jpg")), "JPEG", quality=90)
             self.video_dir = self.tmp_jpeg_dir
-        self.frame_names = sorted([
-            p for p in os.listdir(self.video_dir)
-            if os.path.splitext(p)[-1].lower() in [".jpg", ".jpeg"]
-        ], key=lambda p: str(os.path.splitext(p)[0]))
 
+        # Collect frame names (after conversion)
+        all_frames = sorted([p for p in os.listdir(self.video_dir) if p.lower().endswith((".jpg", ".jpeg"))])
+
+        # 🔹 If too many frames, sample every other (or every nth) frame
+        if len(all_frames) > 1500:
+            print(f"⚠️ {len(all_frames)} frames found. Sampling every 3rd frame to reduce load.")
+            sampled_frames = all_frames[::3]  # take every 2nd frame
+            # Optionally move sampled frames into a temporary folder
+            sampled_dir = os.path.join(self.video_dir, "_sampled")
+            os.makedirs(sampled_dir, exist_ok=True)
+            for fname in sampled_frames:
+                shutil.copy(os.path.join(self.video_dir, fname), os.path.join(sampled_dir, fname))
+            self.video_dir = sampled_dir
+            self.frame_names = sampled_frames
+        else:
+            self.frame_names = all_frames
+
+        # Default scaling factors for already-resized JPEGs
+        for f in self.frame_names:
+            if f not in self.scale_factors:
+                self.scale_factors[f] = (1.0, 1.0)
     def select_points_on_image(self, frame_path):
         import matplotlib.pyplot as plt
         from PIL import Image
@@ -120,26 +147,70 @@ class SAM2VideoSegmenter:
         plt.show()
         return coords, labels
 
+    def rescale_mask(self, mask, frame_name):
+        """Rescale a low-res mask back to original resolution."""
+        sx, sy = self.scale_factors.get(frame_name, (1.0, 1.0))
+        if sx != 1.0 or sy != 1.0:
+            new_w = int(mask.shape[1] * sx)
+            new_h = int(mask.shape[0] * sy)
+            return cv2.resize(mask.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_NEAREST).astype(bool)
+        return mask
+    
     def interactive_segmentation(self, frame_idx=None, obj_id=1):
-        self.inference_state = self.predictor.init_state(video_path=self.video_dir)
-        self.predictor.reset_state(self.inference_state)
-        selected_frames = np.linspace(0, len(self.frame_names)-1, num = min(3, len(self.frame_names)))
-        all_points = []
-        all_labels = []
-        for idx in selected_frames:
-            idx = int(idx)
-            frame_path = os.path.join(self.video_dir, self.frame_names[idx])
-            points, labels = self.select_points_on_image(frame_path)
-            all_points.extend(points)
-            all_labels.extend(labels)
+        points_file = os.path.join(self.color_dir, "interactive_points.json")
 
-            _, self.out_obj_ids, self.out_mask_logits = self.predictor.add_new_points_or_box(
-                inference_state=self.inference_state,
-                frame_idx=idx,
-                obj_id=obj_id,
-                points=np.array(all_points, dtype=np.float32),
-                labels=np.array(all_labels, np.int32)
-            )
+        if os.path.exists(points_file):
+            print(f"🔹 Found saved points at {points_file}, loading...")
+            with open(points_file, 'r') as f:
+                data = json.load(f)
+            all_points = [tuple(p) for p in data["points"]]   # convert back to tuples
+            all_labels = data["labels"]
+            selected_frames = data.get("frames", [])          # load frame indices if available
+
+            self.inference_state = self.predictor.init_state(video_path=self.video_dir)
+            self.predictor.reset_state(self.inference_state)
+
+            # Re-apply saved clicks to predictor
+            for idx in selected_frames:
+                _, self.out_obj_ids, self.out_mask_logits = self.predictor.add_new_points_or_box(
+                    inference_state=self.inference_state,
+                    frame_idx=idx,
+                    obj_id=obj_id,
+                    points=np.array(all_points, dtype=np.float32),
+                    labels=np.array(all_labels, np.int32)
+                )
+
+        else:
+            print("🖱️ No saved points found. Please click interactively...")
+            self.inference_state = self.predictor.init_state(video_path=self.video_dir)
+            self.predictor.reset_state(self.inference_state)
+
+            selected_frames = np.linspace(0, len(self.frame_names) - 1, num=min(3, len(self.frame_names))).astype(int)
+            all_points, all_labels = [], []
+
+            for idx in selected_frames:
+                frame_path = os.path.join(self.video_dir, self.frame_names[idx])
+                points, labels = self.select_points_on_image(frame_path)
+                all_points.extend(points)
+                all_labels.extend(labels)
+
+                _, self.out_obj_ids, self.out_mask_logits = self.predictor.add_new_points_or_box(
+                    inference_state=self.inference_state,
+                    frame_idx=idx,
+                    obj_id=obj_id,
+                    points=np.array(all_points, dtype=np.float32),
+                    labels=np.array(all_labels, np.int32)
+                )
+
+            # ✅ Save as JSON (convert tuples → lists for JSON compatibility)
+            with open(points_file, 'w') as f:
+                json.dump({
+                    "frames": selected_frames.tolist(),
+                    "points": [list(p) for p in all_points],
+                    "labels": all_labels
+                }, f, indent=2)
+
+            print(f"✅ Saved interactive points to {points_file}")
 
     def propagate_segmentation(self):
         self.video_segments = {}
@@ -148,68 +219,79 @@ class SAM2VideoSegmenter:
                 out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
                 for i, out_obj_id in enumerate(out_obj_ids)
             }
-
     def visualize_results(self, vis_frame_stride=1):
-        # split and get the last folder
-        root_dir = os.path.join(os.path.split(os.path.split(self.video_dir)[0])[0])
-        output_dir = os.path.join(os.path.split(os.path.split(self.video_dir)[0])[0], 'segmented_color')
+        output_dir = os.path.join(self.color_dir, 'segmented_color')
         os.makedirs(output_dir, exist_ok=True)
-        plt.close("all")
-        for out_frame_idx in range(0, len(self.frame_names), vis_frame_stride):
-            img_path = os.path.join(self.video_dir, self.frame_names[out_frame_idx])
-            image = cv2.imread(img_path)  # BGR
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-            # Create black canvas
+        for idx in range(0, len(self.frame_names), vis_frame_stride):
+            frame_name = self.frame_names[idx].split('.')[0] + '.png'
+            img_path = os.path.join(self.color_dir,'Color', frame_name)
+            image = cv2.imread(img_path)
+            if image is None:
+                print(f"⚠️ Skipping missing frame: {img_path}")
+                continue
+
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            H, W = image_rgb.shape[:2]
             masked_image = np.zeros_like(image_rgb)
 
-            # Apply mask(s)
-            if out_frame_idx in self.video_segments:
-                for out_obj_id, out_mask in self.video_segments[out_frame_idx].items():
-                    out_mask = out_mask.squeeze().astype(bool)
-                    
-                    masked_image[out_mask] = image_rgb[out_mask]
+            if idx in self.video_segments:
+                for obj_id, mask in self.video_segments[idx].items():
+                    # 🔹 Ensure mask is 2D boolean and resized to (H, W)
+                    mask_full = np.squeeze(mask)               # (1, h, w) → (h, w)
+                    if mask_full.ndim == 3:
+                        mask_full = mask_full[:, :, 0]         # (h, w, 1) → (h, w)
 
-            # Save result
-            fig_path = os.path.join(output_dir, f"vis_frame_{out_frame_idx:06d}.png")
-            plt.imsave(fig_path, masked_image)
-        
-        
-        # --- Save video ---
+                    mask_full = cv2.resize(mask_full.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST)
+                    mask_full = mask_full.astype(bool)
+
+                    # ✅ Apply mask to masked_image
+                    masked_image[mask_full] = image_rgb[mask_full]
+
+            out_path = os.path.join(output_dir, f"vis_frame_{idx:06d}.png")
+            plt.imsave(out_path, masked_image)
+
+        # Save video
         img_paths = sorted(glob(os.path.join(output_dir, "vis_frame_*.png")))
         if img_paths:
-            # Read first image to get frame size
             frame = cv2.imread(img_paths[0])
-            height, width, _ = frame.shape
-            video_out_dir = os.path.split(output_dir)[0]
-            video_path = os.path.join(video_out_dir, "masked_video.mp4")
-            writer = cv2.VideoWriter(video_path, cv2.VideoWriter_fourcc(*'mp4v'), 10, (width, height))
-
-            for img_path in img_paths:
-                frame = cv2.imread(img_path)
-                writer.write(frame)
+            h, w, _ = frame.shape
+            out_video = os.path.join(os.path.split(output_dir)[0], "masked_video.mp4")
+            writer = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*'mp4v'), 10, (w, h))
+            for p in img_paths:
+                writer.write(cv2.imread(p))
             writer.release()
-            print(f"✅ Saved video to {video_path}")
-        else:
-            print("⚠️ No masked frames found to save as video.")
-
+            print(f"✅ Saved video to {out_video}")
 
 if __name__ == "__main__":
-    segmenter = SAM2VideoSegmenter("/home/xhe71/Desktop/dog_data/baby/CCD0411_side/1/Color")
-    segmenter.load_video_frames()
-    segmenter.interactive_segmentation()
-    segmenter.propagate_segmentation()
-    segmenter.visualize_results()
-    # Clean up temp JPEG folder if it was created
-    if hasattr(segmenter, "tmp_jpeg_dir") and segmenter.tmp_jpeg_dir is not None:
-        import shutil
-        try:
-            shutil.rmtree(segmenter.tmp_jpeg_dir)
-        except Exception as e:
-            print(f"Warning: failed to remove temp JPEG dir {segmenter.tmp_jpeg_dir}: {e}")
-    if hasattr(segmenter, "segmented_path"):
-        import shutil
-        try:
-            shutil.rmtree(segmenter.tmp_jpeg_dir)
-        except Exception as e:
-            print(f"Warning: failed to remove temp JPEG dir {segmenter.tmp_jpeg_dir}: {e}")
+    import shutil
+    # 🔹 Ask user to provide the base directory interactively
+    base_path = input("Enter the base folder path containing all trials: ").strip()
+
+    if not os.path.exists(base_path):
+        raise FileNotFoundError(f"❌ The provided path does not exist: {base_path}")
+
+
+    # Loop through each trial
+    for trial in sorted(os.listdir(base_path)):
+        trial_path = os.path.join(base_path, trial, "Color")
+        if not os.path.isdir(trial_path):
+            continue  # Skip non-trial directories
+
+        print(f"\n=== 🐾 Processing Trial: {trial} ===")
+        segmenter = SAM2VideoSegmenter(trial_path)
+        segmenter.load_video_frames()
+        segmenter.interactive_segmentation()   # 🖱️ interactive labeling
+
+        # Optional: you can enable propagation + visualization if desired
+        # segmenter.propagate_segmentation()
+        # segmenter.visualize_results()
+
+        # ✅ Clean up temp JPEG folder if created
+        if hasattr(segmenter, "tmp_jpeg_dir") and segmenter.tmp_jpeg_dir is not None:
+            try:
+                shutil.rmtree(segmenter.tmp_jpeg_dir)
+            except Exception as e:
+                print(f"Warning: failed to remove temp JPEG dir {segmenter.tmp_jpeg_dir}: {e}")
+
+    print("✅ All trials processed.")

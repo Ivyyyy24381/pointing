@@ -6,6 +6,16 @@ import matplotlib
 from segmentation import SAM2VideoSegmenter
 import shutil
 import os
+import torch
+import gc
+
+def clear_gpu():
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    print("🟢 GPU memory cleared")
+
 
 def segment_subject(folder_path):
     segmenter = SAM2VideoSegmenter(folder_path)
@@ -44,7 +54,7 @@ def process_dog(folder_path, side_view=False):
             detect_dog(segmented_video_path)
             print("tracking dog...")
             dog = True
-
+        clear_gpu()
         json_files = [f for f in os.listdir(folder_full_path) if f.endswith('.json')]
         if not json_files:
             print(f"No JSON found in {folder_full_path}")
