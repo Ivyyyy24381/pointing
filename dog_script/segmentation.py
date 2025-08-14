@@ -31,7 +31,8 @@ class SAM2VideoSegmenter:
         self.Image = Image
         self.video_dir = video_dir
         self.color_dir = os.path.split(self.video_dir)[0]
-        self.max_size = 360
+        # Reduce max_size for better memory management while preserving quality
+        self.max_size = 640  # Increased from 360 to reduce shrinking
 
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
@@ -72,6 +73,39 @@ class SAM2VideoSegmenter:
         self.processing_dimensions = {}
         # Initialize inference state to None
         self.inference_state = None
+        self.original_framerate = None
+
+    def reset_model_memory(self):
+        """Reset SAM2 model memory for new trial processing."""
+        print("🔄 Resetting SAM2 model memory for new trial...")
+        if self.inference_state is not None:
+            self.predictor.reset_state(self.inference_state)
+            self.inference_state = None
+        self.clear_gpu_memory()
+        
+    def get_original_framerate(self):
+        """Get original framerate from source video or fallback to metadata."""
+        if self.original_framerate is not None:
+            return self.original_framerate
+            
+        # Try to get from original Color.mp4
+        color_video_path = os.path.join(self.color_dir, "Color.mp4")
+        if os.path.exists(color_video_path):
+            cap = cv2.VideoCapture(color_video_path)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            if fps > 0:
+                # Adjust for sampling if present
+                sampling_rate = getattr(self, 'sampling_rate', 1)
+                adjusted_fps = max(1.0, fps / sampling_rate)
+                self.original_framerate = adjusted_fps
+                print(f"🎬 Detected framerate: {fps} FPS, adjusted for sampling: {adjusted_fps} FPS")
+                return adjusted_fps
+        
+        # Fallback to 10 FPS
+        self.original_framerate = 10.0
+        print("🎬 Using fallback framerate: 10 FPS")
+        return self.original_framerate
 
 
 
@@ -129,8 +163,10 @@ class SAM2VideoSegmenter:
                 img = Image.open(src).convert("RGB")
                 orig_w, orig_h = img.size
                 self.original_dimensions[fname] = (orig_w, orig_h)
-                img.thumbnail((self.max_size, self.max_size))  # downscale
-                new_w, new_h = img.size
+                # Use resize instead of thumbnail for better control
+                scale_factor = min(self.max_size / orig_w, self.max_size / orig_h)
+                new_w, new_h = int(orig_w * scale_factor), int(orig_h * scale_factor)
+                img = img.resize((new_w, new_h), Image.LANCZOS)  # High-quality resampling
                 jpeg_name = fname.replace(".png", ".jpg")
                 self.scale_factors[jpeg_name] = (orig_w / new_w, orig_h / new_h)
                 self.processing_dimensions[jpeg_name] = (new_w, new_h)
@@ -152,6 +188,10 @@ class SAM2VideoSegmenter:
             print(f"⚠️ {len(all_frames)} frames found. Sampling every {sample_rate} frames for memory management.")
             sampled_frames = all_frames[::sample_rate]
             
+            # Store sampling information for metadata
+            self.original_frame_count = len(all_frames)
+            self.sampling_rate = sample_rate
+            
             # Ensure we don't exceed the limit
             if len(sampled_frames) > max_frames_for_memory:
                 sampled_frames = sampled_frames[:max_frames_for_memory]
@@ -168,6 +208,10 @@ class SAM2VideoSegmenter:
             sample_rate = 2
             print(f"⚠️ {len(all_frames)} frames found. Sampling every {sample_rate} frames for performance.")
             sampled_frames = all_frames[::sample_rate]
+            
+            # Store sampling information for metadata
+            self.original_frame_count = len(all_frames)
+            self.sampling_rate = sample_rate
             
             sampled_dir = os.path.join(self.video_dir, "_sampled")
             os.makedirs(sampled_dir, exist_ok=True)
@@ -193,7 +237,7 @@ class SAM2VideoSegmenter:
         print(f"📏 Scale factors for {len(self.scale_factors)} frames")
         
         # Debug: Show first few scale factors
-        for i, (fname, scale) in enumerate(list(self.scale_factors.items())[:3]):
+        for fname, scale in list(self.scale_factors.items())[:3]:
             print(f"   {fname}: scale={scale}, orig={self.original_dimensions.get(fname.replace('.jpg', '.png'), 'unknown')}, proc={self.processing_dimensions[fname]}")
         
         return len(self.frame_names)
@@ -230,8 +274,85 @@ class SAM2VideoSegmenter:
         return mask
     
 
+    def select_starting_frame(self):
+        """Allow user to visually select the optimal starting frame for segmentation."""
+        import matplotlib.pyplot as plt
+        from PIL import Image
+        
+        print("🎯 Select the best frame where the subject is clearly visible...")
+        
+        # Show a grid of sample frames for user to choose from
+        sample_indices = np.linspace(0, len(self.frame_names) - 1, num=min(9, len(self.frame_names))).astype(int)
+        
+        fig, axes = plt.subplots(3, 3, figsize=(15, 12))
+        axes = axes.flatten()
+        
+        for i, idx in enumerate(sample_indices):
+            if i >= len(axes):
+                break
+                
+            frame_path = os.path.join(self.video_dir, self.frame_names[idx])
+            img = Image.open(frame_path)
+            axes[i].imshow(img)
+            axes[i].set_title(f"Frame {idx}")
+            axes[i].axis('off')
+        
+        # Hide unused subplots
+        for i in range(len(sample_indices), len(axes)):
+            axes[i].axis('off')
+        
+        plt.tight_layout()
+        plt.suptitle("Choose starting frame number (close window to continue)", fontsize=16)
+        plt.show()
+        
+        while True:
+            try:
+                user_input = input(f"Enter frame number (0-{len(self.frame_names)-1}) or press Enter for middle frame: ").strip()
+                if not user_input:
+                    return len(self.frame_names) // 2
+                    
+                frame_idx = int(user_input)
+                if 0 <= frame_idx < len(self.frame_names):
+                    return frame_idx
+                else:
+                    print(f"Please enter a number between 0 and {len(self.frame_names)-1}")
+            except ValueError:
+                print("Please enter a valid number")
+
     def interactive_segmentation(self, frame_idx=None, obj_id=1):
         points_file = os.path.join(self.color_dir, "interactive_points.json")
+        
+        # Check if we should use external labeling (from label.py)
+        if not os.path.exists(points_file):
+            print("🔗 No interactive points found. Running external labeling...")
+            from label import label_trial_for_segmentation
+            
+            # Use label.py to select frame and get points
+            labeling_result = label_trial_for_segmentation(os.path.join(self.color_dir, "Color"))
+            if labeling_result:
+                # Save the result as interactive_points.json
+                with open(points_file, 'w') as f:
+                    json.dump(labeling_result, f, indent=2)
+                print(f"✅ Saved labeling result to {points_file}")
+            else:
+                print("❌ External labeling failed")
+                return
+        
+        # Load the points and determine starting frame
+        if os.path.exists(points_file):
+            with open(points_file, 'r') as f:
+                data = json.load(f)
+            
+            # Get starting frame from label.py if available
+            if "starting_frame_idx" in data:
+                frame_idx = data["starting_frame_idx"]
+                print(f"🎯 Using frame {frame_idx} from label.py selection")
+            elif frame_idx is None:
+                frame_idx = self.select_starting_frame()
+                print(f"🎯 Selected frame {frame_idx} as starting frame")
+        
+        # Store the starting frame for propagation
+        self.starting_frame_idx = frame_idx
 
         # Initialize inference state with memory management
         try:
@@ -330,73 +451,117 @@ class SAM2VideoSegmenter:
         else:
             print("🖱️ No saved points found. Please click interactively...")
 
-            selected_frames = np.linspace(0, len(self.frame_names) - 1, num=min(3, len(self.frame_names))).astype(int)
-            all_points, all_labels = [], []
-
-            for idx in selected_frames:
-                frame_path = os.path.join(self.video_dir, self.frame_names[idx])
-                points, labels = self.select_points_on_image(frame_path)
-                all_points.extend(points)
-                all_labels.extend(labels)
-
-                # Scale points for SAM2 if needed
-                frame_name = self.frame_names[idx]
-                sx, sy = self.scale_factors.get(frame_name, (1.0, 1.0))
-                scaled_points = [(p[0] / sx, p[1] / sy) for p in all_points]
-
-                try:
-                    _, self.out_obj_ids, self.out_mask_logits = self.predictor.add_new_points_or_box(
-                        inference_state=self.inference_state,
-                        frame_idx=idx,
-                        obj_id=obj_id,
-                        points=np.array(scaled_points, dtype=np.float32),
-                        labels=np.array(all_labels, np.int32)
-                    )
-                    print(f"✅ Applied points to frame {idx}")
-                except Exception as e:
-                    print(f"❌ Failed to apply points to frame {idx}: {e}")
-                    print(f"   Points shape: {np.array(scaled_points).shape}")
-                    print(f"   Labels shape: {np.array(all_labels).shape}")
-                    raise
-
-            # ✅ Save as JSON (convert tuples → lists for JSON compatibility)
-            if all_points:  # Only save if we have points
-                with open(points_file, 'w') as f:
-                    json.dump({
-                        "frames": selected_frames.tolist(),
-                        "points": [list(p) for p in all_points],
-                        "labels": all_labels
-                    }, f, indent=2)
-
-                print(f"✅ Saved interactive points to {points_file}")
-            else:
+            # Focus on the selected starting frame for point annotation
+            frame_path = os.path.join(self.video_dir, self.frame_names[frame_idx])
+            points, labels = self.select_points_on_image(frame_path)
+            
+            if not points:
                 print("⚠️ No points were selected, segmentation may not work properly")
+                return
 
-    def propagate_segmentation(self):
+            # Scale points for SAM2 if needed
+            frame_name = self.frame_names[frame_idx]
+            sx, sy = self.scale_factors.get(frame_name, (1.0, 1.0))
+            scaled_points = [(p[0] / sx, p[1] / sy) for p in points]
+
+            try:
+                _, self.out_obj_ids, self.out_mask_logits = self.predictor.add_new_points_or_box(
+                    inference_state=self.inference_state,
+                    frame_idx=frame_idx,
+                    obj_id=obj_id,
+                    points=np.array(scaled_points, dtype=np.float32),
+                    labels=np.array(labels, np.int32)
+                )
+                print(f"✅ Applied points to starting frame {frame_idx}")
+            except Exception as e:
+                print(f"❌ Failed to apply points to frame {frame_idx}: {e}")
+                print(f"   Points shape: {np.array(scaled_points).shape}")
+                print(f"   Labels shape: {np.array(labels).shape}")
+                raise
+
+            # Save as JSON (convert tuples → lists for JSON compatibility)
+            with open(points_file, 'w') as f:
+                json.dump({
+                    "starting_frame": frame_idx,
+                    "frames": [frame_idx],
+                    "points": [list(p) for p in points],
+                    "labels": labels
+                }, f, indent=2)
+
+            print(f"✅ Saved interactive points to {points_file}")
+
+    def propagate_segmentation(self, start_frame_idx=None, enable_backward=True):
+        """
+        Bidirectional propagation from any starting frame.
+        
+        Args:
+            start_frame_idx: Frame index to start propagation from. If None, uses middle frame.
+            enable_backward: Whether to propagate backward from start frame.
+        """
         if self.inference_state is None:
             print("❌ Cannot propagate segmentation: inference state not initialized")
             return
             
-        print("🚀 Starting segmentation propagation...")
+        # Determine starting frame
+        if start_frame_idx is None:
+            # Use the frame selected during interactive segmentation
+            start_frame_idx = getattr(self, 'starting_frame_idx', len(self.frame_names) // 2)
+            print(f"🎯 Using selected starting frame {start_frame_idx} for propagation")
+        else:
+            print(f"🎯 Starting propagation from frame {start_frame_idx}")
         
-        # Clear GPU memory before propagation
+        start_frame_idx = max(0, min(start_frame_idx, len(self.frame_names) - 1))
+        
+        print("🚀 Starting bidirectional segmentation propagation...")
         self.clear_gpu_memory()
         
         self.video_segments = {}
+        forward_segments = {}
+        backward_segments = {}
+        
         try:
-            for out_frame_idx, out_obj_ids, out_mask_logits in self.predictor.propagate_in_video(self.inference_state):
-                self.video_segments[out_frame_idx] = {
+            # Forward propagation (from start_frame to end)
+            print(f"➡️ Forward propagation from frame {start_frame_idx} to {len(self.frame_names)-1}")
+            for out_frame_idx, out_obj_ids, out_mask_logits in self.predictor.propagate_in_video(
+                self.inference_state, start_frame_idx=start_frame_idx, max_frame_num_to_track=len(self.frame_names)-1
+            ):
+                forward_segments[out_frame_idx] = {
                     out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
                     for i, out_obj_id in enumerate(out_obj_ids)
                 }
                 # Move tensors to CPU immediately to free GPU memory
                 if hasattr(out_mask_logits, 'cpu'):
                     del out_mask_logits
-                    
-            print(f"✅ Propagation completed for {len(self.video_segments)} frames")
             
-            # Clear GPU memory after propagation
+            print(f"✅ Forward propagation completed for {len(forward_segments)} frames")
             self.clear_gpu_memory()
+            
+            # Backward propagation (from start_frame to beginning) if enabled
+            if enable_backward and start_frame_idx > 0:
+                print(f"⬅️ Backward propagation from frame {start_frame_idx} to 0")
+                
+                # Reset state and re-apply points for backward propagation
+                self.predictor.reset_state(self.inference_state)
+                self._reapply_points_for_backward(start_frame_idx)
+                
+                for out_frame_idx, out_obj_ids, out_mask_logits in self.predictor.propagate_in_video(
+                    self.inference_state, start_frame_idx=start_frame_idx, max_frame_num_to_track=0, reverse=True
+                ):
+                    backward_segments[out_frame_idx] = {
+                        out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
+                        for i, out_obj_id in enumerate(out_obj_ids)
+                    }
+                    # Move tensors to CPU immediately
+                    if hasattr(out_mask_logits, 'cpu'):
+                        del out_mask_logits
+                
+                print(f"✅ Backward propagation completed for {len(backward_segments)} frames")
+                self.clear_gpu_memory()
+            
+            # Merge forward and backward results
+            self._merge_bidirectional_segments(forward_segments, backward_segments, start_frame_idx)
+            
+            print(f"✅ Bidirectional propagation completed for {len(self.video_segments)} total frames")
             
         except self.torch.cuda.OutOfMemoryError as e:
             print(f"❌ GPU out of memory during propagation: {e}")
@@ -406,6 +571,83 @@ class SAM2VideoSegmenter:
         except Exception as e:
             print(f"❌ Segmentation propagation failed: {e}")
             raise
+    
+    def _reapply_points_for_backward(self, start_frame_idx):
+        """Re-apply saved points for backward propagation."""
+        points_file = os.path.join(self.color_dir, "interactive_points.json")
+        
+        if not os.path.exists(points_file):
+            print("⚠️ No saved points found for backward propagation")
+            return
+            
+        with open(points_file, 'r') as f:
+            data = json.load(f)
+        
+        all_points = [tuple(p) for p in data["points"]]
+        all_labels = data["labels"]
+        
+        # Scale points for SAM2 processing
+        if self.scale_factors:
+            scale_values = list(self.scale_factors.values())
+            avg_sx = sum(s[0] for s in scale_values) / len(scale_values)
+            avg_sy = sum(s[1] for s in scale_values) / len(scale_values)
+            scaled_points = [(p[0] / avg_sx, p[1] / avg_sy) for p in all_points]
+        else:
+            scaled_points = all_points
+        
+        # Apply points to the starting frame for backward propagation
+        try:
+            _, self.out_obj_ids, self.out_mask_logits = self.predictor.add_new_points_or_box(
+                inference_state=self.inference_state,
+                frame_idx=start_frame_idx,
+                obj_id=1,
+                points=np.array(scaled_points, dtype=np.float32),
+                labels=np.array(all_labels, np.int32)
+            )
+            print(f"✅ Re-applied points to frame {start_frame_idx} for backward propagation")
+        except Exception as e:
+            print(f"❌ Failed to re-apply points for backward propagation: {e}")
+            raise
+    
+    def _merge_bidirectional_segments(self, forward_segments, backward_segments, start_frame_idx):
+        """
+        Merge forward and backward propagation results into a continuous timeline.
+        
+        Forward segments take priority for frames >= start_frame_idx
+        Backward segments are used for frames < start_frame_idx
+        """
+        print(f"🔄 Merging bidirectional segments around frame {start_frame_idx}")
+        
+        # Start with forward segments (includes start frame and beyond)
+        self.video_segments = forward_segments.copy()
+        
+        # Add backward segments for frames before start frame
+        for frame_idx, segments in backward_segments.items():
+            if frame_idx < start_frame_idx:
+                self.video_segments[frame_idx] = segments
+            elif frame_idx == start_frame_idx:
+                # For the start frame, we could blend or take the better result
+                # For now, prioritize forward propagation result
+                if frame_idx not in self.video_segments:
+                    self.video_segments[frame_idx] = segments
+        
+        # Sort the segments by frame index for consistency
+        self.video_segments = dict(sorted(self.video_segments.items()))
+        
+        # Validate continuity
+        expected_frames = set(range(len(self.frame_names)))
+        actual_frames = set(self.video_segments.keys())
+        missing_frames = expected_frames - actual_frames
+        
+        if missing_frames:
+            print(f"⚠️ Missing segments for frames: {sorted(missing_frames)}")
+        else:
+            print(f"✅ Complete timeline: {len(self.video_segments)} frames segmented")
+        
+        print(f"📊 Segment distribution:")
+        print(f"   Forward: frames {min(forward_segments.keys()) if forward_segments else 'none'} - {max(forward_segments.keys()) if forward_segments else 'none'}")
+        print(f"   Backward: frames {min(backward_segments.keys()) if backward_segments else 'none'} - {max(backward_segments.keys()) if backward_segments else 'none'}")
+        print(f"   Total merged: frames {min(self.video_segments.keys())} - {max(self.video_segments.keys())}")
     def save_scale_metadata(self):
         """Save scale factors and dimensions for downstream processing."""
         metadata = {
@@ -415,7 +657,9 @@ class SAM2VideoSegmenter:
             "max_size": self.max_size,
             "processing_info": {
                 "resized_for_sam2": True,
-                "frame_count": len(self.frame_names)
+                "frame_count": len(self.frame_names),
+                "original_frame_count": getattr(self, 'original_frame_count', len(self.frame_names)),
+                "sampling_rate": getattr(self, 'sampling_rate', 1)
             }
         }
         
@@ -469,7 +713,10 @@ class SAM2VideoSegmenter:
             frame = cv2.imread(img_paths[0])
             h, w, _ = frame.shape
             out_video = os.path.join(os.path.split(output_dir)[0], "masked_video.mp4")
-            writer = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*'mp4v'), 10, (w, h))
+            # Get original framerate from source video
+            original_fps = self.get_original_framerate()
+            writer = cv2.VideoWriter(out_video, cv2.VideoWriter_fourcc(*'mp4v'), original_fps, (w, h))
+            print(f"📹 Creating masked video at {original_fps} FPS")
             for p in img_paths:
                 writer.write(cv2.imread(p))
             writer.release()

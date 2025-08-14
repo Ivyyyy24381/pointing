@@ -62,9 +62,9 @@ class TargetLabeler:
         # Default intrinsics if nothing found
         print("⚠️ No camera intrinsics found, using defaults")
         return SimpleNamespace(
-            width=1280, height=720,
-            fx=910.0, fy=910.0,
-            ppx=640.0, ppy=360.0,
+            width=640, height=480,
+            fx=455.0, fy=455.0,
+            ppx=320.0, ppy=240.0,
             coeffs=[0.0] * 5
         )
     
@@ -180,6 +180,11 @@ class TargetLabeler:
                 orig_x = event.xdata / self.scale_factor
                 orig_y = event.ydata / self.scale_factor
                 
+                # Normalize pixel coordinates to [0,1] range
+                orig_h, orig_w = self.representative_frame.shape[:2]
+                normalized_x = float(orig_x / orig_w)
+                normalized_y = float(orig_y / orig_h)
+                
                 # Convert to 3D coordinates
                 world_coords = self.pixel_to_3d([orig_x, orig_y], self.depth_frame)
                 
@@ -189,6 +194,7 @@ class TargetLabeler:
                         "id": target_id,
                         "label": f"target_{target_id}",
                         "pixel_coords": [float(orig_x), float(orig_y)],
+                        "normalized_coords": [normalized_x, normalized_y],
                         "world_coords": world_coords,
                         "depth_m": float(world_coords[2])
                     }
@@ -204,7 +210,7 @@ class TargetLabeler:
                            bbox=dict(boxstyle="round,pad=0.3", facecolor='red', alpha=0.8))
                     target_circles.append(circle)
                     
-                    print(f"✅ Target {target_id}: ({orig_x:.0f}, {orig_y:.0f}) -> "
+                    print(f"✅ Target {target_id}: ({orig_x:.0f}, {orig_y:.0f}) -> normalized({normalized_x:.3f}, {normalized_y:.3f}) -> "
                           f"({world_coords[0]:.3f}, {world_coords[1]:.3f}, {world_coords[2]:.3f}) m")
                     
                     fig.canvas.draw()

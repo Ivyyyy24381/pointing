@@ -247,16 +247,34 @@ def load_intrinsics_and_targets(json_path, side_view = False):
     
     output_dir = os.path.dirname(json_path)
     parent_dir = os.path.dirname(output_dir)
-    for file in os.listdir(parent_dir):
-        if file.endswith(".bag"):
-            bag_path =  os.path.join(parent_dir, file)
-            intr = find_realsense_intrinsics(bag_path)
-    if os.path.exists(os.path.join(parent_dir,"rosbag_metadata.yaml")):
-        yaml_path =  os.path.join(parent_dir,"rosbag_metadata.yaml")
-        intr = load_intrinsics_from_yaml(yaml_path)
+    # Load standard intrinsics first (consistent across all trials)
+    standard_intrinsics_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "standard_intrinsics.yaml")
+    if os.path.exists(standard_intrinsics_path):
+        print(f"📐 Using standard camera intrinsics from {standard_intrinsics_path}")
+        intr = load_intrinsics_from_yaml(standard_intrinsics_path)
     else:
-        intr = load_intrinsics_from_yaml('./intrinsics.yaml')
-            
+        # Fallback to existing methods
+        intr = None
+        
+        # Try rosbag metadata YAML
+        if os.path.exists(os.path.join(parent_dir,"rosbag_metadata.yaml")):
+            yaml_path = os.path.join(parent_dir,"rosbag_metadata.yaml")
+            print(f"📐 Using rosbag metadata from {yaml_path}")
+            intr = load_intrinsics_from_yaml(yaml_path)
+        else:
+            # Try to extract from bag file
+            for file in os.listdir(parent_dir):
+                if file.endswith(".bag"):
+                    bag_path = os.path.join(parent_dir, file)
+                    print(f"📐 Extracting intrinsics from {bag_path}")
+                    intr = find_realsense_intrinsics(bag_path)
+                    break
+        
+        # Final fallback
+        if intr is None:
+            print("📐 Using default intrinsics file")
+            intr = load_intrinsics_from_yaml('./intrinsics.yaml')
+    
     # Try to load trial-specific targets first
     targets = load_trial_targets(parent_dir)
     
@@ -310,7 +328,37 @@ def prepare_video_and_json(output_dir, json_path, side_view):
         depth_files = sorted([f for f in os.listdir(depth_video_path) if f.endswith(".raw")])
         first_img = cv2.imread(os.path.join(video_path, color_files[0]))
         height, width = first_img.shape[:2]
-        fps=6
+        
+        # Get framerate from the masked video which has correct timing
+        masked_video_path = os.path.join(output_dir, "masked_video.mp4")
+        if os.path.exists(masked_video_path):
+            temp_cap = cv2.VideoCapture(masked_video_path)
+            fps = temp_cap.get(cv2.CAP_PROP_FPS)
+            temp_cap.release()
+            print(f"🎬 Using masked video framerate: {fps} FPS from {masked_video_path}")
+        else:
+            # Fallback: try to calculate from original video and sampling
+            original_video_path = video_path.replace('/Color', '/Color.mp4')
+            if os.path.exists(original_video_path):
+                temp_cap = cv2.VideoCapture(original_video_path)
+                original_fps = temp_cap.get(cv2.CAP_PROP_FPS)
+                temp_cap.release()
+                
+                # Check if SAM2 processing applied frame sampling
+                scale_metadata_path = os.path.join(output_dir, "sam2_scale_metadata.json")
+                sampling_rate = 1
+                if os.path.exists(scale_metadata_path):
+                    with open(scale_metadata_path, 'r') as f:
+                        metadata = json.load(f)
+                        sampling_rate = metadata.get('processing_info', {}).get('sampling_rate', 1)
+                
+                # Adjust framerate based on sampling
+                fps = original_fps / sampling_rate
+                print(f"🎬 Fallback - Original: {original_fps} FPS, Sampling: {sampling_rate}x → Output: {fps} FPS")
+            else:
+                fps = 6  # Final fallback
+                print(f"⚠️ Could not find any video reference, using fallback framerate: {fps} FPS")
+        
         cap = depth_cap = None
         # Extract starting frame index from first filename
         if color_files:
@@ -864,6 +912,14 @@ def pose_visualize(json_path, side_view = False, dog= True):
     else:
         print("⚠️ No scale metadata found - assuming no resize correction needed")
     (cap, depth_cap, out, width, height, fps, use_image_folder, color_files, depth_files, video_path, depth_video_path, output_json_path, json_data, start_frame_idx) = prepare_video_and_json(output_dir, json_path, side_view)
+    
+    # Validate image dimensions match intrinsics
+    expected_width, expected_height = 1280, 720
+    if width != expected_width or height != expected_height:
+        print(f"⚠️ WARNING: Image dimensions {width}x{height} don't match expected {expected_width}x{expected_height}")
+        print("📐 Consider running image standardization first")
+    else:
+        print(f"✅ Image dimensions {width}x{height} match camera intrinsics")
 
     # --- Resample JSON to match number of image frames if needed ---
     if use_image_folder:
