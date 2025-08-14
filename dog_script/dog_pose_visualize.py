@@ -149,6 +149,99 @@ def plot_cube(ax, center, size=0.1, color='red', alpha=0.6):
 def smooth_bbox(prev_bbox, curr_bbox, alpha=0.5):
     return [alpha * p + (1 - alpha) * c for p, c in zip(prev_bbox, curr_bbox)]
 
+def load_scale_info(output_dir):
+    """Load scale information from segmentation processing."""
+    scale_metadata_path = os.path.join(output_dir, "sam2_scale_metadata.json")
+    if os.path.exists(scale_metadata_path):
+        with open(scale_metadata_path, 'r') as f:
+            return json.load(f)
+    return None
+
+def correct_keypoint_coordinates(keypoints, scale_info, video_source_path):
+    """Correct keypoint coordinates based on scale factors."""
+    if scale_info is None:
+        return keypoints  # No correction needed
+        
+    # Check if keypoints come from masked video (resized) or original images
+    if "masked_video.mp4" in video_source_path:
+        # Keypoints are from masked video which was created from resized images
+        # Need to scale back to original resolution
+        corrected_keypoints = []
+        for frame_kps in keypoints:
+            if not frame_kps:  # Empty frame
+                corrected_keypoints.append(frame_kps)
+                continue
+                
+            frame_corrected = []
+            for kp_set in frame_kps:
+                if not kp_set:  # No keypoints in this set
+                    frame_corrected.append(kp_set)
+                    continue
+                    
+                # Apply scaling correction
+                corrected_kp_set = []
+                for kp in kp_set:
+                    if len(kp) >= 2:
+                        # Use average scale factor (could be made more precise per frame)
+                        avg_scale = np.mean(list(scale_info['scale_factors'].values()), axis=0)
+                        x_corrected = kp[0] * avg_scale[0]
+                        y_corrected = kp[1] * avg_scale[1]
+                        corrected_kp = [x_corrected, y_corrected] + list(kp[2:])  # Keep confidence etc.
+                        corrected_kp_set.append(corrected_kp)
+                    else:
+                        corrected_kp_set.append(kp)
+                frame_corrected.append(corrected_kp_set)
+            corrected_keypoints.append(frame_corrected)
+        return corrected_keypoints
+    else:
+        # Keypoints are already at original resolution
+        return keypoints
+
+def load_trial_targets(trial_dir):
+    """Load trial-specific target coordinates."""
+    target_file = os.path.join(trial_dir, "target_coordinates.json")
+    if os.path.exists(target_file):
+        with open(target_file, 'r') as f:
+            data = json.load(f)
+        # Convert to format expected by existing code
+        targets = []
+        for target in data.get("targets", []):
+            targets.append({
+                "label": target["label"],
+                "x": target["world_coords"][0],
+                "y": target["world_coords"][1], 
+                "z": target["world_coords"][2]
+            })
+        print(f"📥 Loaded {len(targets)} manual targets from {target_file}")
+        return targets
+    return None
+
+def validate_coordinate_alignment(keypoints, depth_frame, scale_info):
+    """Validate that 2D coordinates properly map to depth data."""
+    if not keypoints:
+        return True
+        
+    h, w = depth_frame.shape
+    valid_count = 0
+    total_count = 0
+    
+    for kp in keypoints[:10]:  # Check first 10 keypoints
+        if len(kp) >= 2:
+            x, y = int(kp[0]), int(kp[1])
+            total_count += 1
+            if 0 <= x < w and 0 <= y < h:
+                depth_val = depth_frame[y, x]
+                if depth_val > 0:  # Valid depth
+                    valid_count += 1
+                    
+    alignment_ratio = valid_count / total_count if total_count > 0 else 0
+    print(f"🔍 Coordinate alignment: {valid_count}/{total_count} ({alignment_ratio:.1%}) valid mappings")
+    
+    if alignment_ratio < 0.3:
+        print("⚠️ Warning: Low coordinate alignment - scale correction may be needed")
+        return False
+    return True
+
 def load_intrinsics_and_targets(json_path, side_view = False):
     bag_path = ''
     
@@ -164,17 +257,37 @@ def load_intrinsics_and_targets(json_path, side_view = False):
     else:
         intr = load_intrinsics_from_yaml('./intrinsics.yaml')
             
-    # Load targets for later use in trace plotting and distance calculation
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    parent_path = os.path.dirname(current_path)
-    if side_view:
-        target_json_path = os.path.join(parent_path, "target_coords_side.json")
-    else:
-        target_json_path = os.path.join(parent_path, "target_coords_front.json")
-    targets = []
-    if os.path.exists(target_json_path):
-        with open(target_json_path, 'r') as f:
-            targets = json.load(f)
+    # Try to load trial-specific targets first
+    targets = load_trial_targets(parent_dir)
+    
+    if targets is None:
+        # Fall back to static target configuration
+        current_path = os.path.dirname(os.path.abspath(__file__))
+        parent_path = os.path.dirname(current_path)
+        if side_view:
+            target_json_path = os.path.join(parent_path, "target_coords_side.json")
+        else:
+            target_json_path = os.path.join(parent_path, "target_coords_front.json")
+        targets = []
+        if os.path.exists(target_json_path):
+            with open(target_json_path, 'r') as f:
+                targets = json.load(f)
+            print(f"📥 Using static targets from {target_json_path}")
+        else:
+            # Load from YAML config as last resort
+            config_path = os.path.join(parent_path, "config", "targets.yaml")
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    yaml_data = yaml.safe_load(f)
+                for target in yaml_data.get('targets', []):
+                    targets.append({
+                        "label": target['id'],
+                        "x": target['position_m'][0],
+                        "y": target['position_m'][1],
+                        "z": target['position_m'][2]
+                    })
+                print(f"📥 Using static targets from {config_path}")
+                
     return intr, targets, output_dir
 
 def prepare_video_and_json(output_dir, json_path, side_view):
@@ -743,16 +856,52 @@ def pose_visualize(json_path, side_view = False, dog= True):
     smoothed_bbox = None
 
     intr, targets, output_dir = load_intrinsics_and_targets(json_path, side_view)
+    
+    # Load scale information from segmentation step
+    scale_info = load_scale_info(output_dir)
+    if scale_info:
+        print(f"📏 Loaded scale metadata: {scale_info['processing_info']}")
+    else:
+        print("⚠️ No scale metadata found - assuming no resize correction needed")
     (cap, depth_cap, out, width, height, fps, use_image_folder, color_files, depth_files, video_path, depth_video_path, output_json_path, json_data, start_frame_idx) = prepare_video_and_json(output_dir, json_path, side_view)
 
     # --- Resample JSON to match number of image frames if needed ---
     if use_image_folder:
         num_images = len(color_files)
         num_json = len(json_data)
+        print(f"🔍 JSON Debug: type={type(json_data)}, len={num_json}, images={num_images}")
+        
         if num_json != num_images:
             print(f"Resampling JSON data: {num_json} entries → {num_images} frames")
-            indices = np.linspace(0, num_json - 1, num=num_images).astype(int)
-            json_data = [json_data[i] for i in indices]
+            if num_json > 0 and isinstance(json_data, list):
+                # Create safe indices that don't exceed bounds
+                indices = np.linspace(0, num_json - 1, num=min(num_images, num_json)).astype(int)
+                # Ensure indices are within bounds
+                indices = np.clip(indices, 0, num_json - 1)
+                print(f"🔍 Index range: {indices.min()} to {indices.max()}")
+                
+                if len(indices) < num_images:
+                    # If we need more frames than available, repeat the last frame
+                    try:
+                        last_frame = json_data[-1]
+                        print(f"🔍 Got last frame: {type(last_frame)}")
+                    except Exception as e:
+                        print(f"❌ Error getting last frame: {e}")
+                        last_frame = {"bodyparts": [], "bboxes": [], "bbox_scores": []}
+                    
+                    resampled_data = [json_data[i] for i in indices]
+                    # Pad with copies of the last frame
+                    while len(resampled_data) < num_images:
+                        import copy
+                        resampled_data.append(copy.deepcopy(last_frame))
+                    json_data = resampled_data
+                else:
+                    json_data = [json_data[i] for i in indices[:num_images]]
+                print(f"✅ Resampled to {len(json_data)} frames")
+            else:
+                print("⚠️ No JSON data to resample or wrong type")
+                # Create empty frames
+                json_data = [{"bodyparts": [], "bboxes": [], "bbox_scores": []} for _ in range(num_images)]
 
     transform_matrix = load_side_to_front_transform() if side_view else np.eye(4)
     with open("./config/skeleton_config.json", "r") as f:
@@ -767,7 +916,7 @@ def pose_visualize(json_path, side_view = False, dog= True):
     processed_json = []
     trace_3d = []
     last_valid = None
-    frame_idx = -1
+    frame_idx = 0  # Start at 0 instead of -1
     max_deviation = 200
     fx, fy = intr.fx, intr.fy
     cx, cy = intr.ppx, intr.ppy
@@ -775,8 +924,10 @@ def pose_visualize(json_path, side_view = False, dog= True):
     missing_frame_count = 0
     last_color_frame = None
     last_depth_frame = None
+    
+    print(f"🎬 Starting frame processing: {len(json_data)} JSON entries, {len(color_files) if use_image_folder else 'video'} frames")
+    
     while True:
-        frame_idx += 1
         if use_image_folder:
             if frame_idx >= len(color_files) or frame_idx >= len(json_data):
                 break
@@ -787,6 +938,10 @@ def pose_visualize(json_path, side_view = False, dog= True):
                 depth_frame = raw / 1000
             ret = True
             ret_d = True
+            
+            # Debug frame synchronization
+            if frame_idx < 5:  # Only for first few frames
+                print(f"📹 Frame {frame_idx}: Loading {color_files[frame_idx]} with JSON entry {frame_idx}")
         else:
             ret, frame = cap.read()
             ret_d, depth_frame = depth_cap.read()
@@ -804,6 +959,10 @@ def pose_visualize(json_path, side_view = False, dog= True):
         bboxes = entry.get("bboxes", [])
         bodyparts = entry.get("bodyparts", [])
         confidences = entry.get("bbox_scores", [1.0] * len(bboxes))
+        
+        # Debug bbox alignment for first few frames
+        if frame_idx < 5 and bboxes:
+            print(f"🎯 Frame {frame_idx}: JSON bbox {bboxes[0][:2]} (center: {bboxes[0][0] + bboxes[0][2]/2:.1f}, {bboxes[0][1] + bboxes[0][3]/2:.1f})")
 
         # else:
         valid_candidates = select_valid_candidates(bboxes, bodyparts, confidences, width, height, side_view)
@@ -844,7 +1003,7 @@ def pose_visualize(json_path, side_view = False, dog= True):
             missing_frame_count += 1
             if side_view and missing_frame_count >= 5:
                 print(f"Side view: detection stopped after {missing_frame_count} consecutive missing frames at frame {frame_idx}")
-            # frame_idx += 1
+            frame_idx += 1
             continue
         
         # Found a valid candidate, reset missing frame counter
@@ -861,7 +1020,7 @@ def pose_visualize(json_path, side_view = False, dog= True):
                 # Always append a NaN trace point and empty metrics, even if skipping due to deviation
                 trace_3d.append([np.nan, np.nan, np.nan])
                 per_frame_target_metrics.append({})
-                # frame_idx += 1
+                frame_idx += 1
                 continue
         if smoothed_bbox is None:
             smoothed_bbox = bbox
@@ -929,8 +1088,7 @@ def pose_visualize(json_path, side_view = False, dog= True):
         out.write(frame)
         prev_gray = frame_gray
         prev_center = (smoothed_bbox[0] + smoothed_bbox[2] / 2, smoothed_bbox[1] + smoothed_bbox[3] / 2)
-
-        # frame_idx += 1
+        frame_idx += 1
 
     cap.release() if not use_image_folder else None
     depth_cap.release() if not use_image_folder else None

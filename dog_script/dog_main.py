@@ -14,7 +14,12 @@ def clear_gpu():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-    print("🟢 GPU memory cleared")
+        # Print memory info
+        allocated = torch.cuda.memory_allocated(0) / 1024**3
+        cached = torch.cuda.memory_reserved(0) / 1024**3
+        print(f"🟢 GPU memory cleared: {allocated:.2f}GB allocated, {cached:.2f}GB cached")
+    else:
+        print("🟢 GPU memory cleared (CPU mode)")
 
 
 def segment_subject(folder_path):
@@ -23,6 +28,10 @@ def segment_subject(folder_path):
     segmenter.interactive_segmentation()
     segmenter.propagate_segmentation()
     segmenter.visualize_results()
+    
+    # Clear GPU memory before continuing
+    segmenter.clear_gpu_memory()
+    
     # Clean up temp JPEG folder if it was created
     if hasattr(segmenter, "tmp_jpeg_dir") and segmenter.tmp_jpeg_dir is not None:
         try:
@@ -30,6 +39,10 @@ def segment_subject(folder_path):
             shutil.rmtree(os.path.join(folder_path, 'segmented_path'))
         except Exception as e:
             print(f"Warning: failed to remove temp JPEG dir {segmenter.tmp_jpeg_dir}: {e}")
+    
+    # Delete the segmenter to free memory
+    del segmenter
+    
     print("Segmented_Subject")
 
 
@@ -55,13 +68,24 @@ def process_dog(folder_path, side_view=False):
             print("tracking dog...")
             dog = True
         clear_gpu()
+        
+        # Find the skeleton JSON file
         json_files = [f for f in os.listdir(folder_full_path) if f.endswith('.json')]
-        if not json_files:
+        skeleton_files = [f for f in json_files if 'skeleton' in f]
+        
+        if skeleton_files:
+            json_path = os.path.join(folder_full_path, skeleton_files[0])
+        elif json_files:
+            json_path = os.path.join(folder_full_path, json_files[0])
+        else:
             print(f"No JSON found in {folder_full_path}")
             continue
 
-        json_path = os.path.join(folder_full_path, json_files[0])
+        print(f"Using JSON file: {os.path.basename(json_path)}")
         pose_visualize(json_path, side_view=side_view, dog = dog)
+        
+        # Clear GPU memory after pose processing
+        clear_gpu()
 
 
 # ---- New function to concatenate processed results ----

@@ -294,35 +294,50 @@ class GestureDataProcessor:
         plt.close(fig)  # Close the figure to free memory
         # Do not call plt.show() here to allow for further drawing before showing.
         return ax, fig
-
-    def process_data(self, trimmed_data):
+    def process_data(self, trimmed_data, forced_pointing_arm=None):
+        """
+        Process gesture data with optional forced pointing arm selection.
+        
+        Args:
+            trimmed_data: DataFrame containing trimmed gesture data
+            forced_pointing_arm: Optional string ('Left', 'Right') to force pointing arm selection
+                            If None, uses automatic detection based on frame counts
+        """
         LEFT_WRIST_INDEX = 15
         RIGHT_WRIST_INDEX = 16
+        
         # Fit ground plane and get transformation matrix
         ground_plane, T = self.fit_ground_plane_w_targets(self.targets)
+        
         # Transform targets
         transformed_targets = []
         human_target_pos = np.array(self.human_target['position_m'])
         # Transform human target position to ground plane
         transformed_human_target = self.transform_points(np.array([human_target_pos]), T)[0]
+        
         for target in self.targets:
             pos = np.array(target['position_m'])
             transformed_pos = self.transform_points(np.array([pos]), T)[0]
             transformed_targets.append({**target, 'position_m': transformed_pos.tolist()})
+        
         ground_plane, _ = self.fit_ground_plane_w_targets(transformed_targets)
+        
         # Process gesture data
         data = []
         for index, row in trimmed_data.iterrows():
             frame_id = row['frame']
             pointing_arm = row['pointing_arm']
             wrist_location = self.parse_vector_string(row['wrist_location'])
+            
             # parse landmarks
             landmarks_2d = self.parse_landmarks(row['landmarks'], mode="mediapipe", output_format="list")
             landmarks_3d = self.parse_landmarks(row['landmarks_3d'], mode="list", output_format="list")
+            
             # Transform the 3D landmarks before plotting them
             if landmarks_3d is None:
                 continue
             transformed_landmarks_3d = self.transform_points(np.array(landmarks_3d), T)
+            
             # --- Transform and plot gesture vectors ---
             vectors = {
                 "eye_to_wrist": self.parse_vector_string(row['eye_to_wrist']),
@@ -330,11 +345,13 @@ class GestureDataProcessor:
                 "elbow_to_wrist": self.parse_vector_string(row['elbow_to_wrist']),
                 "nose_to_wrist": self.parse_vector_string(row['nose_to_wrist']),
             }
+            
             # Transform vectors and wrist location to aligned ground frame
             vectors_to_plot = {}
             handedness = row['pointing_arm']
             wrist_index = LEFT_WRIST_INDEX if handedness == 'Left' else RIGHT_WRIST_INDEX
             wrist_transformed = transformed_landmarks_3d[wrist_index]
+            
             distances = {}
             # Compute ground intersection for each vector
             ground_intersections = {}
@@ -343,11 +360,13 @@ class GestureDataProcessor:
                 vec_rotated = T[:3, :3] @ vec.reshape(3, 1)  # Apply rotation
                 vec_rot = vec_rotated.flatten()
                 vectors_to_plot[name] = vec_rot.tolist()
+                
                 # Compute intersection with y=0 plane (ground)
                 if vec_rot[1] != 0:
                     scale = wrist_transformed[1] / vec_rot[1]
                     intersection = wrist_transformed - vec_rot * scale
                     ground_intersections[f"{name}_ground_intersection"] = intersection.tolist()
+                    
                     dists = []
                     for target in transformed_targets:
                         pos = np.array(target['position_m'])
@@ -357,12 +376,14 @@ class GestureDataProcessor:
                 else:
                     ground_intersections[f"{name}_ground_intersection"] = [None, None, None]
                     distances[name] = [None] * len(transformed_targets)
+
             # --------- HEAD ORIENTATION COMPUTATION -----------
-            # Indices: left_eye = 1, right_eye = 2, mouth = 0, nose = 3 (adjust if needed)
+            # (keeping the existing head orientation code unchanged)
             head_orientation_vector = None
             head_orientation_origin = None
             head_ground_intersection = [None, None, None]
             head_orientation_dist_to_targets = [None] * 4
+            
             try:
                 # Use transformed landmarks for orientation in ground-aligned frame
                 left_eye = transformed_landmarks_3d[2]
@@ -370,20 +391,25 @@ class GestureDataProcessor:
                 left_mouth = transformed_landmarks_3d[9]
                 right_mouth = transformed_landmarks_3d[10]
                 nose = transformed_landmarks_3d[0]
+                
                 left_eye_vec = np.array(nose) - np.array(left_eye)
                 right_eye_vec = np.array(nose) - np.array(right_eye)
                 eye_vec = (left_eye_vec + right_eye_vec) / 2
+                
                 left_mouth_vec = np.array(nose) - np.array(left_mouth)
                 right_mouth_vec = np.array(nose) - np.array(right_mouth)
                 mouth_vec = (left_mouth_vec- right_mouth_vec) / 2
+                
                 head_orientation_vector = (eye_vec + mouth_vec) / 2/np.linalg.norm((eye_vec + mouth_vec) / 2)
                 head_orientation_origin = nose.tolist() if isinstance(nose, np.ndarray) else nose
+                
                 # --- Compute ground intersection for head orientation ---
                 if head_orientation_vector[1] != 0:
                     scale = head_orientation_origin[1] / head_orientation_vector[1]
                     head_ground_intersection = (np.array(head_orientation_origin) - scale * head_orientation_vector).tolist()
                 else:
                     head_ground_intersection = [None, None, None]
+                
                 # --- Compute distances to each target ---
                 head_orientation_dist_to_targets = []
                 for i, target in enumerate(transformed_targets, start=1):
@@ -399,16 +425,17 @@ class GestureDataProcessor:
                 head_orientation_origin = None
                 head_ground_intersection = [None, None, None]
                 head_orientation_dist_to_targets = [None] * 4
-            # --------------------------------------------------
+            
             # Store row data for later DataFrame
-            # Compute ground intersection for the main vector (eye_to_wrist)
             ground_intersection = ground_intersections.get('eye_to_wrist_ground_intersection')
+            
             # Build row dictionary for saving, inserting ground intersections after wrist_location
             new_row = {
                 'frame': frame_id,
                 'pointing_hand_handedness': pointing_arm,
                 'wrist_location': wrist_location,
             }
+            
             # Insert ground intersection points in order
             for key in [
                 'eye_to_wrist_ground_intersection',
@@ -417,6 +444,7 @@ class GestureDataProcessor:
                 'nose_to_wrist_ground_intersection'
             ]:
                 new_row[key] = ground_intersections.get(key)
+            
             new_row['ground_intersection'] = ground_intersection
             new_row['landmarks'] = landmarks_3d
             new_row['pointing_confidence'] = row.get('confidence', None)
@@ -430,6 +458,7 @@ class GestureDataProcessor:
                 'elbow_to_wrist_distances': distances.get('elbow_to_wrist'),
                 'nose_to_wrist_distances': distances.get('nose_to_wrist'),
             }
+            
             # Add head orientation to row
             new_row['head_orientation_vector'] = head_orientation_vector
             new_row['head_orientation_origin'] = head_orientation_origin
@@ -437,19 +466,22 @@ class GestureDataProcessor:
             new_row['head_orientation_ground_intersection'] = head_ground_intersection
             for i in range(4):
                 new_row[f'head_orientation_dist_to_target_{i+1}'] = head_orientation_dist_to_targets[i]
+            
             head_vector = {
                 'head_orientation_vector': head_orientation_vector,
                 'head_orientation_origin': head_orientation_origin
             }
+            
             data.append(new_row)
+            
             # Plot skeleton and ground plane, and pass row for vector arrows
-            self.plot_3d_skeleton(transformed_landmarks_3d, transformed_targets, vectors_to_plot, wrist_location=wrist_transformed, head_orientation = head_vector, frame_id = frame_id)
-            # plt.show()
+            self.plot_3d_skeleton(transformed_landmarks_3d, transformed_targets, vectors_to_plot, 
+                                wrist_location=wrist_transformed, head_orientation=head_vector, frame_id=frame_id)
+
         # Save trimmed results
         rows = []
         for row in data:
-            # Prepare row_output with requested column order:
-            # Order: frame, pointing_arm, wrist_location, *_ground_intersection, ground_intersection, vectors, distances, confidence, landmarks, head_orientation_vector, head_orientation_origin, head_orientation_ground_intersection, head_orientation_dist_to_target_1-4
+            # Prepare row_output with requested column order
             row_output = {
                 'frame': row.get('frame'),
                 'global_frame': row.get('frame') + self.global_start_frame,  # Adjust global frame
@@ -463,17 +495,20 @@ class GestureDataProcessor:
                 'ground_intersection': row.get('ground_intersection'),
                 'head_orientation_ground_intersection': row.get('head_orientation_ground_intersection'),
             }
+            
             for vec_name in ['eye_to_wrist', 'shoulder_to_wrist', 'elbow_to_wrist', 'nose_to_wrist']:
                 vec_key = f'{vec_name}_vec'
                 row_output[vec_key] = row['vectors'].get(vec_name)
-                if vec_name =='shoulder_to_wrist':
+                
+                if vec_name == 'shoulder_to_wrist':
                     min_dist_to_target = 100
                     min_dist_target_index = -1
+                
                 for i in range(4):
                     dist_key = f'{vec_name}_dist_to_target_{i+1}'
                     row_output[dist_key] = row['vectors'].get(f'{vec_name}_distances', [None]*4)[i]
                     
-                    if vec_name =='shoulder_to_wrist' and row_output[dist_key] < min_dist_to_target:
+                    if vec_name == 'shoulder_to_wrist' and row_output[dist_key] is not None and row_output[dist_key] < min_dist_to_target:
                         min_dist_to_target = row_output[dist_key]
                         min_dist_target_index = i+1
             
@@ -482,12 +517,15 @@ class GestureDataProcessor:
             # Add head orientation distances to targets
             for i in range(4):
                 row_output[f'head_orientation_dist_to_target_{i+1}'] = row.get(f'head_orientation_dist_to_target_{i+1}')
+            
             row_output['confidence'] = row.get('pointing_confidence')
             row_output['landmarks'] = row.get('landmarks')
             # Add head orientation columns
             row_output['head_orientation_vector'] = row.get('head_orientation_vector')
             row_output['head_orientation_origin'] = row.get('head_orientation_origin')
+            
             rows.append(row_output)
+
         # Define columns in the desired order
         columns = [
             'frame', 'global_frame','pointing_arm', 'pointing_to', 'wrist_location',
@@ -504,19 +542,29 @@ class GestureDataProcessor:
             'head_orientation_dist_to_target_1', 'head_orientation_dist_to_target_2', 'head_orientation_dist_to_target_3', 'head_orientation_dist_to_target_4',
             'head_orientation_vector', 'head_orientation_origin','landmarks', 'confidence'
         ]
+        
         df = pd.DataFrame(rows, columns=columns)
-        # Count number of 'left' and 'right' in the pointing_arm column
-        left_count = (df['pointing_arm'] == 'Left').sum()
-        right_count = (df['pointing_arm'] == 'Right').sum()
+        
+        # NEW: Handle forced pointing arm selection
+        if forced_pointing_arm is not None:
+            print(f"🔒 Forcing pointing arm to: {forced_pointing_arm}")
+            # Filter only frames with the forced pointing arm
+            df = df[df['pointing_arm'] == forced_pointing_arm].reset_index(drop=True)
+            print(f"📊 Filtered to {len(df)} frames with {forced_pointing_arm} arm")
+        else:
+            # Original logic: Count number of 'left' and 'right' in the pointing_arm column
+            left_count = (df['pointing_arm'] == 'Left').sum()
+            right_count = (df['pointing_arm'] == 'Right').sum()
 
-        print(f"🫲 Left pointing frames: {left_count}")
-        print(f"🫱 Right pointing frames: {right_count}")
+            print(f"🫲 Left pointing frames: {left_count}")
+            print(f"🫱 Right pointing frames: {right_count}")
 
-        # Determine dominant hand (the one with more frames)
-        dominant_hand = 'Left' if left_count > right_count else 'Right'
+            # Determine dominant hand (the one with more frames)
+            dominant_hand = 'Left' if left_count > right_count else 'Right'
 
-        # Filter only frames with the dominant pointing arm
-        df = df[df['pointing_arm'] == dominant_hand].reset_index(drop=True)
+            # Filter only frames with the dominant pointing arm
+            df = df[df['pointing_arm'] == dominant_hand].reset_index(drop=True)
+            print(f"📊 Using dominant hand: {dominant_hand} ({len(df)} frames)")
 
         self.plot_2d_pointing_trace(df, transformed_targets, transformed_human_target)
         

@@ -56,7 +56,7 @@ def label_trial(trial_color_dir):
         print(f"⚠️ No frames in {trial_color_dir}")
         return None
 
-    selected_idxs = np.linspace(0, len(frame_names)-1, num=min(3, len(frame_names)), dtype=int)
+    selected_idxs = np.linspace(0, len(frame_names)-1, num=min(5, len(frame_names)), dtype=int)
     all_points, all_labels, all_frames = [], [], []
 
     for idx in selected_idxs:
