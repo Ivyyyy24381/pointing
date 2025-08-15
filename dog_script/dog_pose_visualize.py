@@ -200,20 +200,29 @@ def correct_keypoint_coordinates(keypoints, scale_info, video_source_path):
 def load_trial_targets(trial_dir):
     """Load trial-specific target coordinates."""
     target_file = os.path.join(trial_dir, "target_coordinates.json")
+    print(f"🔍 Checking for target file: {target_file}")
+    
     if os.path.exists(target_file):
-        with open(target_file, 'r') as f:
-            data = json.load(f)
-        # Convert to format expected by existing code
-        targets = []
-        for target in data.get("targets", []):
-            targets.append({
-                "label": target["label"],
-                "x": target["world_coords"][0],
-                "y": target["world_coords"][1], 
-                "z": target["world_coords"][2]
-            })
-        print(f"📥 Loaded {len(targets)} manual targets from {target_file}")
-        return targets
+        try:
+            with open(target_file, 'r') as f:
+                data = json.load(f)
+            
+            # Convert to format expected by existing code
+            targets = []
+            for target in data.get("targets", []):
+                targets.append({
+                    "label": target["label"],
+                    "x": target["world_coords"][0],
+                    "y": target["world_coords"][1], 
+                    "z": target["world_coords"][2]
+                })
+            print(f"✅ Loaded {len(targets)} manual targets from {target_file}")
+            return targets
+        except Exception as e:
+            print(f"❌ Error loading target file {target_file}: {e}")
+            return None
+    else:
+        print(f"⚠️ Target file not found: {target_file}")
     return None
 
 def validate_coordinate_alignment(keypoints, depth_frame, scale_info):
@@ -275,8 +284,14 @@ def load_intrinsics_and_targets(json_path, side_view = False):
             print("📐 Using default intrinsics file")
             intr = load_intrinsics_from_yaml('./intrinsics.yaml')
     
-    # Try to load trial-specific targets first
-    targets = load_trial_targets(parent_dir)
+    # Try to load trial-specific targets first (check trial directory)
+    print(f"🔍 Looking for targets in trial directory: {output_dir}")
+    targets = load_trial_targets(output_dir)
+    
+    # If not found in trial directory, check parent directory
+    if targets is None:
+        print(f"🔍 Looking for targets in parent directory: {parent_dir}")
+        targets = load_trial_targets(parent_dir)
     
     if targets is None:
         # Fall back to static target configuration
