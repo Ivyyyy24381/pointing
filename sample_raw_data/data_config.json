@@ -1,0 +1,33 @@
+{
+  "root_folder": "/Users/ivy/Documents/GitHub/pointing/sample_raw_data",
+  "trials": {
+    "1": {
+      "trial_name": "1",
+      "trial_path": "/Users/ivy/Documents/GitHub/pointing/sample_raw_data/1",
+      "structure": "single_camera",
+      "cameras": [
+        "single_camera"
+      ]
+    },
+    "trial_1": {
+      "trial_name": "trial_1",
+      "trial_path": "/Users/ivy/Documents/GitHub/pointing/sample_raw_data/trial_1",
+      "structure": "multi_camera",
+      "cameras": [
+        "cam1",
+        "cam2",
+        "cam3"
+      ]
+    },
+    "calib_1": {
+      "trial_name": "calib_1",
+      "trial_path": "/Users/ivy/Documents/GitHub/pointing/sample_raw_data/calib_1",
+      "structure": "multi_camera",
+      "cameras": [
+        "cam1",
+        "cam2",
+        "cam3"
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "trial_path": "/Users/ivy/Downloads/rs_session_20251002_122609/trial_1",
+  "trial_name": "trial_1",
+  "camera_id": "cam1",
+  "structure": "multi_camera",
+  "total_frames": 19,
+  "successful": 19,
+  "failed": 0,
+  "frame_range": [
+    49,
+    67
+  ]
+}

@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pointing Gesture Analysis Pipeline</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.2em; opacity: 0.9; }
+        .content { padding: 40px; }
+        .card { background: #f8f9fa; border-radius: 10px; padding: 30px; margin-bottom: 20px; }
+        .card h2 { color: #333; margin-bottom: 20px; font-size: 1.8em; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; color: #555; font-weight: 600; }
+        input[type="text"], input[type="number"], input[type="file"], select { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1em; transition: border-color 0.3s; }
+        input:focus, select:focus { outline: none; border-color: #667eea; }
+        .file-upload { border: 3px dashed #e0e0e0; border-radius: 10px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s; }
+        .file-upload:hover { border-color: #667eea; background: #f8f9fa; }
+        .file-upload input { display: none; }
+        button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 15px 40px; border-radius: 8px; font-size: 1.1em; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; margin-right: 10px; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3); }
+        button:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        .btn-secondary { background: #6c757d; }
+        .btn-danger { background: #dc3545; }
+        .btn-skip { background: #17a2b8; }
+        .visualization { margin-top: 20px; text-align: center; }
+        .visualization img { max-width: 100%; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .alert { padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .alert-info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        #imageCanvas { border: 2px solid #e0e0e0; border-radius: 10px; cursor: crosshair; max-width: 100%; }
+        .result-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .result-table th, .result-table td { padding: 12px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+        .result-table th { background: #667eea; color: white; font-weight: 600; }
+        .result-table tr:hover { background: #f8f9fa; }
+        .button-group { display: flex; gap: 10px; margin-top: 20px; }
+        .checkbox-group { display: flex; align-items: center; gap: 10px; }
+        .checkbox-group input[type="checkbox"] { width: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Pointing Gesture Analysis</h1>
+            <p>Simple Pipeline: Human + Cups + AprilTag (Optional)</p>
+        </div>
+
+        <div class="content">
+            <!-- Step 1: Upload -->
+            <div class="card">
+                <h2>📁 Step 1: Upload Data</h2>
+                <div class="form-group">
+                    <label>Color Image (PNG/JPG)</label>
+                    <div class="file-upload" onclick="document.getElementById('colorFile').click()">
+                        <input type="file" id="colorFile" accept="image/*">
+                        <p>📷 Click to upload color image</p>
+                        <small id="colorFileName"></small>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Depth File (.raw or .npy format)</label>
+                    <div class="file-upload" onclick="document.getElementById('depthFile').click()">
+                        <input type="file" id="depthFile" accept=".raw,.npy">
+                        <p>📊 Click to upload depth file</p>
+                        <small id="depthFileName"></small>
+                    </div>
+                </div>
+                <div id="uploadResult"></div>
+                <button onclick="uploadData()">Upload & Continue →</button>
+                <button class="btn-danger" onclick="resetPipeline()">🔄 Reset</button>
+            </div>
+
+            <!-- Step 2: Optional Calibration -->
+            <div class="card" id="calibrationCard" style="display:none;">
+                <h2>🔧 Step 2: Camera Calibration (Optional)</h2>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="useCalibration" onchange="toggleCalibration()">
+                    <label for="useCalibration">Use custom calibration (uncheck to use default or skip)</label>
+                </div>
+                <div id="calibInputs" style="display:none;">
+                    <div class="form-group">
+                        <label>Calibration Method</label>
+                        <select id="calibMethod" onchange="toggleCalibInputs()">
+                            <option value="manual">Manual Input</option>
+                            <option value="config">Load from Config File</option>
+                        </select>
+                    </div>
+                    <div id="manualInputs">
+                        <div class="form-group">
+                            <label>Focal Length X (fx)</label>
+                            <input type="number" id="fx" value="385.7" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>Focal Length Y (fy)</label>
+                            <input type="number" id="fy" value="385.2" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>Principal Point X (cx)</label>
+                            <input type="number" id="cx" value="320.0" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>Principal Point Y (cy)</label>
+                            <input type="number" id="cy" value="240.0" step="0.1">
+                        </div>
+                    </div>
+                </div>
+                <div id="calibResult"></div>
+                <button onclick="handleCalibration()">Continue →</button>
+                <button class="btn-skip" onclick="skipCalibration()">Skip Calibration</button>
+            </div>
+
+            <!-- Step 3: AprilTag (Auto) -->
+            <div class="card" id="apriltagCard" style="display:none;">
+                <h2>🏷️ Step 3: Detect AprilTag (Auto)</h2>
+                <p>Checking for AprilTag...</p>
+                <div id="apriltagResult"></div>
+            </div>
+
+            <!-- Step 4: Human Detection -->
+            <div class="card" id="humanCard" style="display:none;">
+                <h2>🧍 Step 4: Detect Human</h2>
+                <div id="humanResult"></div>
+                <button onclick="detectHuman()">Detect Human →</button>
+            </div>
+
+            <!-- Step 5: Cup Detection -->
+            <div class="card" id="cupCard" style="display:none;">
+                <h2>🥤 Step 5: Detect Cups (Click on Image)</h2>
+                <div class="alert alert-info">
+                    <strong>Instructions:</strong> Click on 4 cup positions (in order: 1, 2, 3, 4)
+                </div>
+                <canvas id="imageCanvas"></canvas>
+                <p>Clicks: <span id="clickCount">0</span> / 4</p>
+                <div class="button-group">
+                    <button onclick="clearCupClicks()">Clear</button>
+                    <button onclick="detectCups()" id="cupDetectBtn" disabled>Continue →</button>
+                </div>
+            </div>
+
+            <!-- Step 6: Results -->
+            <div class="card" id="resultsCard" style="display:none;">
+                <h2>✅ Results</h2>
+                <div id="computeResult"></div>
+                <div id="finalResults"></div>
+                <div class="button-group">
+                    <button onclick="computeAndVisualize()">Generate Results</button>
+                    <button class="btn-secondary" onclick="downloadResults()">📥 Download JSON</button>
+                    <button class="btn-danger" onclick="resetPipeline()">🔄 Start Over</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        let cupClicks = [];
+        let canvas, ctx, uploadedImage;
+        let useCustomCalib = false;
+
+        document.getElementById('colorFile').addEventListener('change', e => {
+            document.getElementById('colorFileName').textContent = e.target.files[0].name;
+        });
+        document.getElementById('depthFile').addEventListener('change', e => {
+            document.getElementById('depthFileName').textContent = e.target.files[0].name;
+        });
+
+        async function uploadData() {
+            const colorFile = document.getElementById('colorFile').files[0];
+            const depthFile = document.getElementById('depthFile').files[0];
+            if (!colorFile || !depthFile) {
+                alert('Please select both files');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('color_image', colorFile);
+            formData.append('depth_file', depthFile);
+            try {
+                const response = await axios.post('/step/upload', formData);
+                if (response.data.success) {
+                    document.getElementById('uploadResult').innerHTML = `<div class="alert alert-success">${response.data.message}<br>Depth stats: ${JSON.stringify(response.data.depth_stats)}</div>`;
+                    document.getElementById('calibrationCard').style.display = 'block';
+                } else {
+                    showAlert('uploadResult', 'error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('uploadResult', 'error', error.message);
+            }
+        }
+
+        function toggleCalibration() {
+            useCustomCalib = document.getElementById('useCalibration').checked;
+            document.getElementById('calibInputs').style.display = useCustomCalib ? 'block' : 'none';
+        }
+
+        function toggleCalibInputs() {
+            const method = document.getElementById('calibMethod').value;
+            document.getElementById('manualInputs').style.display = method === 'manual' ? 'block' : 'none';
+        }
+
+        async function handleCalibration() {
+            if (!useCustomCalib) {
+                await skipCalibration();
+                return;
+            }
+            const method = document.getElementById('calibMethod').value;
+            const data = { method };
+            if (method === 'manual') {
+                data.fx = parseFloat(document.getElementById('fx').value);
+                data.fy = parseFloat(document.getElementById('fy').value);
+                data.cx = parseFloat(document.getElementById('cx').value);
+                data.cy = parseFloat(document.getElementById('cy').value);
+            }
+            try {
+                const response = await axios.post('/step/calibrate', data);
+                if (response.data.success) {
+                    document.getElementById('calibResult').innerHTML = `<div class="alert alert-success">Calibrated: ${JSON.stringify(response.data.intrinsics)}</div>`;
+                    await detectAprilTag();
+                } else {
+                    showAlert('calibResult', 'error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('calibResult', 'error', error.message);
+            }
+        }
+
+        async function skipCalibration() {
+            // Use default calibration
+            const data = { method: 'manual', fx: 385.7, fy: 385.2, cx: 320.0, cy: 240.0 };
+            try {
+                await axios.post('/step/calibrate', data);
+                await detectAprilTag();
+            } catch (error) {
+                showAlert('calibResult', 'error', error.message);
+            }
+        }
+
+        async function detectAprilTag() {
+            document.getElementById('apriltagCard').style.display = 'block';
+            try {
+                const response = await axios.post('/step/detect_apriltag');
+                const resultDiv = document.getElementById('apriltagResult');
+                if (response.data.has_apriltag) {
+                    resultDiv.innerHTML = `<div class="alert alert-success">✅ AprilTag ${response.data.tag_id} detected!<br>Translation: ${JSON.stringify(response.data.translation)}</div><img src="/results/${response.data.visualization}" style="max-width:100%">`;
+                } else {
+                    resultDiv.innerHTML = `<div class="alert alert-info">ℹ️ No AprilTag (optional, skipping)</div>`;
+                }
+                document.getElementById('humanCard').style.display = 'block';
+            } catch (error) {
+                showAlert('apriltagResult', 'error', error.message);
+            }
+        }
+
+        async function detectHuman() {
+            try {
+                const response = await axios.post('/step/detect_human');
+                const resultDiv = document.getElementById('humanResult');
+                if (response.data.success) {
+                    resultDiv.innerHTML = `<div class="alert alert-success">✅ Human detected! ${Object.keys(response.data.keypoints_3d).length} keypoints</div><img src="/results/${response.data.visualization}" style="max-width:100%">`;
+                    document.getElementById('cupCard').style.display = 'block';
+                    loadImageForCupSelection();
+                } else {
+                    showAlert('humanResult', 'error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('humanResult', 'error', error.message);
+            }
+        }
+
+        function loadImageForCupSelection() {
+            canvas = document.getElementById('imageCanvas');
+            ctx = canvas.getContext('2d');
+            uploadedImage = new Image();
+            uploadedImage.onload = function() {
+                canvas.width = Math.min(800, uploadedImage.width);
+                canvas.height = (uploadedImage.height / uploadedImage.width) * canvas.width;
+                ctx.drawImage(uploadedImage, 0, 0, canvas.width, canvas.height);
+            };
+            uploadedImage.src = '/results/human_detected.jpg';
+            canvas.onclick = function(e) {
+                if (cupClicks.length >= 4) return;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = uploadedImage.width / canvas.width;
+                const scaleY = uploadedImage.height / canvas.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                cupClicks.push({x, y});
+                ctx.beginPath();
+                ctx.arc((e.clientX - rect.left), (e.clientY - rect.top), 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'lime';
+                ctx.fill();
+                ctx.font = '16px Arial';
+                ctx.fillText(`${cupClicks.length}`, (e.clientX - rect.left) + 10, (e.clientY - rect.top));
+                document.getElementById('clickCount').textContent = cupClicks.length;
+                document.getElementById('cupDetectBtn').disabled = cupClicks.length !== 4;
+            };
+        }
+
+        function clearCupClicks() {
+            cupClicks = [];
+            document.getElementById('clickCount').textContent = 0;
+            document.getElementById('cupDetectBtn').disabled = true;
+            if (uploadedImage) ctx.drawImage(uploadedImage, 0, 0, canvas.width, canvas.height);
+        }
+
+        async function detectCups() {
+            try {
+                const response = await axios.post('/step/detect_cups', { cup_clicks: cupClicks });
+                if (response.data.success) {
+                    document.getElementById('resultsCard').style.display = 'block';
+                } else {
+                    alert(response.data.error);
+                }
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        async function computeAndVisualize() {
+            try {
+                const resp1 = await axios.post('/step/compute_positions');
+                if (!resp1.data.success) {
+                    alert(resp1.data.error);
+                    return;
+                }
+                document.getElementById('computeResult').innerHTML = `<div class="alert alert-success">✅ Closest cup: <strong>${resp1.data.closest_cup}</strong></div><table class="result-table"><tr><th>Cup</th><th>Euclidean Dist (m)</th><th>Ray Dist (m)</th></tr>${resp1.data.results.map(r => `<tr><td>${r.cup_label}</td><td>${r.euclidean_distance_m.toFixed(3)}</td><td>${r.ray_distance_m.toFixed(3)}</td></tr>`).join('')}</table>`;
+
+                const resp2 = await axios.post('/step/visualize');
+                if (resp2.data.success) {
+                    document.getElementById('finalResults').innerHTML = `<h3>3D Visualization</h3><img src="/results/${resp2.data.visualization}" style="max-width:100%">`;
+                }
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+
+        async function downloadResults() {
+            window.location.href = '/results/analysis_summary.json';
+        }
+
+        async function resetPipeline() {
+            if (!confirm('Reset everything?')) return;
+            await axios.post('/reset');
+            location.reload();
+        }
+
+        function showAlert(divId, type, message) {
+            document.getElementById(divId).innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+        }
+    </script>
+</body>
+</html>

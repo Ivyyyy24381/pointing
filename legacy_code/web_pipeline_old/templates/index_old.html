@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pointing Gesture Analysis Pipeline</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .progress-container {
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .progress-bar {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            position: relative;
+        }
+
+        .progress-line {
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: #e0e0e0;
+            z-index: 0;
+        }
+
+        .progress-line-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.5s ease;
+        }
+
+        .step {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            flex: 1;
+        }
+
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: white;
+            border: 4px solid #e0e0e0;
+            margin: 0 auto 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .step.active .step-circle {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+            transform: scale(1.2);
+        }
+
+        .step.completed .step-circle {
+            border-color: #28a745;
+            background: #28a745;
+            color: white;
+        }
+
+        .step-label {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .step.active .step-label {
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .step-content {
+            display: none;
+            animation: fadeIn 0.5s;
+        }
+
+        .step-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 600;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        input[type="file"],
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        input:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .file-upload {
+            border: 3px dashed #e0e0e0;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .file-upload:hover {
+            border-color: #667eea;
+            background: #f8f9fa;
+        }
+
+        .file-upload input {
+            display: none;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .visualization {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .visualization img {
+            max-width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .result-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .result-table th,
+        .result-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .result-table th {
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }
+
+        .result-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        #imageCanvas {
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            cursor: crosshair;
+            max-width: 100%;
+        }
+
+        .click-instruction {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #ffeeba;
+        }
+
+        .json-display {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Pointing Gesture Analysis</h1>
+            <p>Human Detection → Cup Detection → Relative Position Analysis</p>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-line">
+                    <div class="progress-line-fill" id="progressFill" style="width: 0%"></div>
+                </div>
+                <div class="step" id="step-0">
+                    <div class="step-circle">1</div>
+                    <div class="step-label">Upload</div>
+                </div>
+                <div class="step" id="step-1">
+                    <div class="step-circle">2</div>
+                    <div class="step-label">Calibrate</div>
+                </div>
+                <div class="step" id="step-2">
+                    <div class="step-circle">3</div>
+                    <div class="step-label">AprilTag</div>
+                </div>
+                <div class="step" id="step-3">
+                    <div class="step-circle">4</div>
+                    <div class="step-label">Human</div>
+                </div>
+                <div class="step" id="step-4">
+                    <div class="step-circle">5</div>
+                    <div class="step-label">Cups</div>
+                </div>
+                <div class="step" id="step-5">
+                    <div class="step-circle">6</div>
+                    <div class="step-label">Compute</div>
+                </div>
+                <div class="step" id="step-6">
+                    <div class="step-circle">7</div>
+                    <div class="step-label">Results</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Step 0: Upload -->
+            <div class="step-content active" id="content-0">
+                <div class="card">
+                    <h2>📁 Step 1: Upload Data</h2>
+                    <div class="form-group">
+                        <label>Color Image (PNG/JPG)</label>
+                        <div class="file-upload" onclick="document.getElementById('colorFile').click()">
+                            <input type="file" id="colorFile" accept="image/*">
+                            <p>📷 Click to upload color image</p>
+                            <small id="colorFileName"></small>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Depth File (RAW format)</label>
+                        <div class="file-upload" onclick="document.getElementById('depthFile').click()">
+                            <input type="file" id="depthFile" accept=".raw">
+                            <p>📊 Click to upload depth file</p>
+                            <small id="depthFileName"></small>
+                        </div>
+                    </div>
+                    <button onclick="uploadData()">Upload & Continue →</button>
+                    <button class="btn-danger" onclick="resetPipeline()">🔄 Reset</button>
+                </div>
+            </div>
+
+            <!-- Step 1: Calibrate -->
+            <div class="step-content" id="content-1">
+                <div class="card">
+                    <h2>🔧 Step 2: Camera Calibration</h2>
+                    <div class="form-group">
+                        <label>Calibration Method</label>
+                        <select id="calibMethod" onchange="toggleCalibInputs()">
+                            <option value="manual">Manual Input</option>
+                            <option value="apriltag">AprilTag Auto-Calibration</option>
+                            <option value="config">Load from Config File</option>
+                        </select>
+                    </div>
+                    <div id="manualInputs">
+                        <div class="form-group">
+                            <label>Focal Length X (fx)</label>
+                            <input type="number" id="fx" value="385.7" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>Focal Length Y (fy)</label>
+                            <input type="number" id="fy" value="385.2" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>Principal Point X (cx)</label>
+                            <input type="number" id="cx" value="320.0" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>Principal Point Y (cy)</label>
+                            <input type="number" id="cy" value="240.0" step="0.1">
+                        </div>
+                    </div>
+                    <button onclick="calibrateCamera()">Calibrate & Continue →</button>
+                </div>
+            </div>
+
+            <!-- Step 2: AprilTag -->
+            <div class="step-content" id="content-2">
+                <div class="card">
+                    <h2>🏷️ Step 3: Detect AprilTag</h2>
+                    <p>Detecting AprilTag to establish world coordinate system...</p>
+                    <div id="apriltagResult"></div>
+                    <button onclick="detectAprilTag()">Detect AprilTag →</button>
+                </div>
+            </div>
+
+            <!-- Step 3: Human -->
+            <div class="step-content" id="content-3">
+                <div class="card">
+                    <h2>🧍 Step 4: Detect Human</h2>
+                    <p>Using MediaPipe to detect human pose and extract keypoints...</p>
+                    <div id="humanResult"></div>
+                    <button onclick="detectHuman()">Detect Human →</button>
+                </div>
+            </div>
+
+            <!-- Step 4: Cups -->
+            <div class="step-content" id="content-4">
+                <div class="card">
+                    <h2>🥤 Step 5: Detect Cups</h2>
+                    <div class="click-instruction">
+                        <strong>Instructions:</strong> Click on the image below to mark 4 cup positions (in order: Cup 1, 2, 3, 4)
+                    </div>
+                    <canvas id="imageCanvas"></canvas>
+                    <p>Clicks: <span id="clickCount">0</span> / 4</p>
+                    <div class="button-group">
+                        <button onclick="clearCupClicks()">Clear Clicks</button>
+                        <button onclick="detectCups()" id="cupDetectBtn" disabled>Detect Cups & Continue →</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Compute -->
+            <div class="step-content" id="content-5">
+                <div class="card">
+                    <h2>📐 Step 6: Compute Relative Positions</h2>
+                    <p>Computing distances and pointing direction...</p>
+                    <div id="computeResult"></div>
+                    <button onclick="computePositions()">Compute →</button>
+                </div>
+            </div>
+
+            <!-- Step 6: Results -->
+            <div class="step-content" id="content-6">
+                <div class="card">
+                    <h2>✅ Step 7: Final Results</h2>
+                    <div id="finalResults"></div>
+                    <div class="button-group">
+                        <button onclick="visualizeResults()">Generate Visualization</button>
+                        <button class="btn-secondary" onclick="downloadResults()">📥 Download Results</button>
+                        <button class="btn-danger" onclick="resetPipeline()">🔄 Start Over</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script>
+        let currentStep = 0;
+        let cupClicks = [];
+        let canvas, ctx, uploadedImage;
+
+        // File upload handlers
+        document.getElementById('colorFile').addEventListener('change', function(e) {
+            document.getElementById('colorFileName').textContent = e.target.files[0].name;
+        });
+
+        document.getElementById('depthFile').addEventListener('change', function(e) {
+            document.getElementById('depthFileName').textContent = e.target.files[0].name;
+        });
+
+        function updateProgress(step) {
+            // Update step indicators
+            for (let i = 0; i < 7; i++) {
+                const stepEl = document.getElementById(`step-${i}`);
+                stepEl.classList.remove('active', 'completed');
+                if (i < step) stepEl.classList.add('completed');
+                if (i === step) stepEl.classList.add('active');
+            }
+
+            // Update progress bar
+            const progress = (step / 6) * 100;
+            document.getElementById('progressFill').style.width = `${progress}%`;
+
+            // Show correct content
+            document.querySelectorAll('.step-content').forEach((el, i) => {
+                el.classList.remove('active');
+                if (i === step) el.classList.add('active');
+            });
+
+            currentStep = step;
+        }
+
+        async function uploadData() {
+            const colorFile = document.getElementById('colorFile').files[0];
+            const depthFile = document.getElementById('depthFile').files[0];
+
+            if (!colorFile || !depthFile) {
+                alert('Please select both color and depth files');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('color_image', colorFile);
+            formData.append('depth_file', depthFile);
+
+            try {
+                const response = await axios.post('/step/upload', formData);
+                if (response.data.success) {
+                    updateProgress(1);
+                    showAlert('success', response.data.message);
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'Upload failed: ' + error.message);
+            }
+        }
+
+        function toggleCalibInputs() {
+            const method = document.getElementById('calibMethod').value;
+            const manualInputs = document.getElementById('manualInputs');
+            manualInputs.style.display = method === 'manual' ? 'block' : 'none';
+        }
+
+        async function calibrateCamera() {
+            const method = document.getElementById('calibMethod').value;
+            const data = { method };
+
+            if (method === 'manual') {
+                data.fx = parseFloat(document.getElementById('fx').value);
+                data.fy = parseFloat(document.getElementById('fy').value);
+                data.cx = parseFloat(document.getElementById('cx').value);
+                data.cy = parseFloat(document.getElementById('cy').value);
+            }
+
+            try {
+                const response = await axios.post('/step/calibrate', data);
+                if (response.data.success) {
+                    updateProgress(2);
+                    showAlert('success', 'Camera calibrated successfully');
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'Calibration failed: ' + error.message);
+            }
+        }
+
+        async function detectAprilTag() {
+            try {
+                const response = await axios.post('/step/detect_apriltag');
+                const resultDiv = document.getElementById('apriltagResult');
+
+                if (response.data.success) {
+                    if (response.data.has_apriltag) {
+                        resultDiv.innerHTML = `
+                            <div class="alert alert-success">
+                                <strong>✅ AprilTag Detected!</strong><br>
+                                Tag ID: ${response.data.tag_id}<br>
+                                Translation: [${response.data.translation.map(v => v.toFixed(3)).join(', ')}] m
+                            </div>
+                            <div class="visualization">
+                                <img src="/results/${response.data.visualization}" alt="AprilTag Detection">
+                            </div>
+                        `;
+                    } else {
+                        resultDiv.innerHTML = `
+                            <div class="alert alert-info">
+                                ℹ️ No AprilTag detected. Using manual coordinates.
+                            </div>
+                        `;
+                    }
+                    updateProgress(3);
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'AprilTag detection failed: ' + error.message);
+            }
+        }
+
+        async function detectHuman() {
+            try {
+                const response = await axios.post('/step/detect_human');
+                const resultDiv = document.getElementById('humanResult');
+
+                if (response.data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>✅ Human Detected!</strong><br>
+                            Found ${Object.keys(response.data.keypoints_3d).length} keypoints
+                        </div>
+                        <div class="visualization">
+                            <img src="/results/${response.data.visualization}" alt="Human Detection">
+                        </div>
+                        <table class="result-table">
+                            <tr><th>Keypoint</th><th>2D (px)</th><th>3D (m)</th></tr>
+                            ${Object.entries(response.data.keypoints_3d).map(([name, pos]) => `
+                                <tr>
+                                    <td>${name}</td>
+                                    <td>[${response.data.keypoints_2d[name].map(v => v.toFixed(0)).join(', ')}]</td>
+                                    <td>[${pos.map(v => v.toFixed(3)).join(', ')}]</td>
+                                </tr>
+                            `).join('')}
+                        </table>
+                    `;
+                    updateProgress(4);
+                    loadImageForCupSelection();
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'Human detection failed: ' + error.message);
+            }
+        }
+
+        function loadImageForCupSelection() {
+            canvas = document.getElementById('imageCanvas');
+            ctx = canvas.getContext('2d');
+
+            uploadedImage = new Image();
+            uploadedImage.onload = function() {
+                canvas.width = Math.min(800, uploadedImage.width);
+                canvas.height = (uploadedImage.height / uploadedImage.width) * canvas.width;
+                ctx.drawImage(uploadedImage, 0, 0, canvas.width, canvas.height);
+            };
+            uploadedImage.src = '/results/human_detected.jpg';
+
+            canvas.onclick = function(e) {
+                if (cupClicks.length >= 4) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = uploadedImage.width / canvas.width;
+                const scaleY = uploadedImage.height / canvas.height;
+
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+
+                cupClicks.push({x, y});
+
+                // Draw click marker
+                ctx.beginPath();
+                ctx.arc((e.clientX - rect.left), (e.clientY - rect.top), 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'lime';
+                ctx.fill();
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Label
+                ctx.font = '16px Arial';
+                ctx.fillStyle = 'lime';
+                ctx.fillText(`Cup ${cupClicks.length}`, (e.clientX - rect.left) + 10, (e.clientY - rect.top));
+
+                document.getElementById('clickCount').textContent = cupClicks.length;
+                document.getElementById('cupDetectBtn').disabled = cupClicks.length !== 4;
+            };
+        }
+
+        function clearCupClicks() {
+            cupClicks = [];
+            document.getElementById('clickCount').textContent = 0;
+            document.getElementById('cupDetectBtn').disabled = true;
+            if (uploadedImage) {
+                ctx.drawImage(uploadedImage, 0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        async function detectCups() {
+            try {
+                const response = await axios.post('/step/detect_cups', { cup_clicks: cupClicks });
+
+                if (response.data.success) {
+                    showAlert('success', 'Cups detected successfully!');
+                    updateProgress(5);
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'Cup detection failed: ' + error.message);
+            }
+        }
+
+        async function computePositions() {
+            try {
+                const response = await axios.post('/step/compute_positions');
+                const resultDiv = document.getElementById('computeResult');
+
+                if (response.data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>✅ Analysis Complete!</strong><br>
+                            Closest Cup: <strong>${response.data.closest_cup}</strong>
+                        </div>
+                        <table class="result-table">
+                            <tr>
+                                <th>Cup</th>
+                                <th>Distance to Wrist (m)</th>
+                                <th>Distance to Ray (m)</th>
+                                <th>Projection (m)</th>
+                            </tr>
+                            ${response.data.results.map(r => `
+                                <tr style="${r.cup_label === response.data.closest_cup ? 'background: #d4edda; font-weight: bold;' : ''}">
+                                    <td>${r.cup_label}</td>
+                                    <td>${r.euclidean_distance_m.toFixed(3)}</td>
+                                    <td>${r.ray_distance_m.toFixed(3)}</td>
+                                    <td>${r.projection_along_ray_m.toFixed(3)}</td>
+                                </tr>
+                            `).join('')}
+                        </table>
+                    `;
+                    updateProgress(6);
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'Position computation failed: ' + error.message);
+            }
+        }
+
+        async function visualizeResults() {
+            try {
+                const response = await axios.post('/step/visualize');
+                const resultDiv = document.getElementById('finalResults');
+
+                if (response.data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>🎉 Pipeline Complete!</strong>
+                        </div>
+                        <div class="visualization">
+                            <img src="/results/${response.data.visualization}" alt="3D Visualization">
+                        </div>
+                        <h3>Summary</h3>
+                        <div class="json-display">${JSON.stringify(response.data.summary, null, 2)}</div>
+                    `;
+                } else {
+                    showAlert('error', response.data.error);
+                }
+            } catch (error) {
+                showAlert('error', 'Visualization failed: ' + error.message);
+            }
+        }
+
+        async function downloadResults() {
+            window.location.href = '/results/analysis_summary.json';
+        }
+
+        async function resetPipeline() {
+            if (!confirm('Are you sure you want to reset the entire pipeline?')) return;
+
+            try {
+                await axios.post('/reset');
+                updateProgress(0);
+                cupClicks = [];
+                showAlert('info', 'Pipeline reset successfully');
+                location.reload();
+            } catch (error) {
+                showAlert('error', 'Reset failed: ' + error.message);
+            }
+        }
+
+        function showAlert(type, message) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+
+            const content = document.querySelector('.step-content.active .card');
+            content.insertBefore(alertDiv, content.firstChild);
+
+            setTimeout(() => alertDiv.remove(), 5000);
+        }
+
+        // Initialize
+        updateProgress(0);
+    </script>
+</body>
+</html>

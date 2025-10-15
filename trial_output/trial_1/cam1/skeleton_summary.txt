@@ -1,0 +1,15 @@
+Skeleton Extraction Summary
+========================================
+Trial: trial_1
+Camera: cam1
+Total frames processed: 19
+Detector: MediaPipe Pose
+Model complexity: 1
+Detection confidence: 0.50
+
+========================================
+POINTING HAND (whole trial): UNKNOWN
+========================================
+
+Per-frame pointing arm distribution:
+  auto: 19 frames (100.0%)

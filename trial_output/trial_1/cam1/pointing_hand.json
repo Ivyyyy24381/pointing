@@ -1,0 +1,9 @@
+{
+  "trial": "trial_1",
+  "camera": "cam1",
+  "pointing_hand": "unknown",
+  "total_frames": 19,
+  "frame_distribution": {
+    "auto": 19
+  }
+}
