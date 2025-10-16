@@ -3,11 +3,11 @@
   "trial_name": "1",
   "camera_id": "single_camera",
   "structure": "single_camera",
-  "total_frames": 46,
-  "successful": 46,
+  "total_frames": 29,
+  "successful": 29,
   "failed": 0,
   "frame_range": [
-    305,
-    350
+    312,
+    340
   ]
 }

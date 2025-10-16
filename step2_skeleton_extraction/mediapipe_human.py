@@ -47,7 +47,8 @@ class MediaPipeHumanDetector(SkeletonDetector):
                  enable_segmentation: bool = False,
                  smooth_landmarks: bool = True,
                  use_optical_flow: bool = True,
-                 motion_history_frames: int = 5):
+                 motion_history_frames: int = 5,
+                 lower_half_only: bool = False):
         """
         Initialize MediaPipe Pose detector.
 
@@ -59,6 +60,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
             smooth_landmarks: Enable landmark smoothing
             use_optical_flow: Use optical flow for motion detection
             motion_history_frames: Number of frames to track for motion analysis
+            lower_half_only: Process only lower half of image (for baby detection)
         """
         if not MEDIAPIPE_AVAILABLE:
             raise ImportError("MediaPipe is required. Install with: pip install mediapipe")
@@ -79,6 +81,10 @@ class MediaPipeHumanDetector(SkeletonDetector):
         # Optical flow settings
         self.use_optical_flow = use_optical_flow
         self.motion_history_frames = motion_history_frames
+
+        # Lower-half processing (for baby detection)
+        self.lower_half_only = lower_half_only
+        self.crop_ratio = 0.5  # Keep lower 50% of image
 
         # History tracking for optical flow
         self.landmark_history = []  # List of past landmarks
@@ -101,21 +107,41 @@ class MediaPipeHumanDetector(SkeletonDetector):
         Returns:
             SkeletonResult or None if no pose detected
         """
+        # Crop to lower half if enabled (for baby detection)
+        y_offset = 0
+        process_image = image
+        process_depth = depth_image
+
+        if self.lower_half_only:
+            from .image_utils import crop_to_lower_half
+            process_image, y_offset = crop_to_lower_half(image, self.crop_ratio)
+
+            if depth_image is not None:
+                process_depth, _ = crop_to_lower_half(depth_image, self.crop_ratio)
+
         # Process image
-        results = self.pose.process(image)
+        results = self.pose.process(process_image)
 
         if not results.pose_landmarks:
             return None
 
         # Extract 2D landmarks
         landmarks_2d = []
-        h, w = image.shape[:2]
+        h, w = process_image.shape[:2]  # Use processed image dimensions
 
         for landmark in results.pose_landmarks.landmark:
             x = landmark.x * w  # Convert normalized to pixel coordinates
             y = landmark.y * h
             visibility = landmark.visibility
             landmarks_2d.append((x, y, visibility))
+
+        # Map coordinates back to original image if cropped
+        if y_offset > 0:
+            from .image_utils import map_coordinates_from_crop
+            # Convert to list format for mapping
+            kp_list = [[x, y, vis] for x, y, vis in landmarks_2d]
+            mapped_kp = map_coordinates_from_crop(kp_list, y_offset)
+            landmarks_2d = [(x, y, vis) for x, y, vis in mapped_kp]
 
         # Compute 3D landmarks using hybrid approach:
         # - Depth image for accurate hip center position

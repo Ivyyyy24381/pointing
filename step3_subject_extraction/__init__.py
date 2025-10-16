@@ -1,9 +1,9 @@
 """
 Step 3: Subject Extraction (Optional)
 
-Segment and extract subjects from images using SAM2.
+Detect subjects (dog/baby) in lower half of image.
 """
 
-from .sam2_segmenter import SAM2VideoSegmenter
+from .subject_detector import SubjectDetector, SubjectDetectionResult
 
-__all__ = ['SAM2VideoSegmenter']
+__all__ = ['SubjectDetector', 'SubjectDetectionResult']

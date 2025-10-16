@@ -20,9 +20,9 @@ def load_skeleton_data(json_path: str) -> dict:
         return json.load(f)
 
 
-def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None, show=True, ax=None):
+def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None, show=True, ax=None, head_orientation=None):
     """
-    Plot 3D skeleton with arm vectors and targets.
+    Plot 3D skeleton with arm vectors, head orientation, and targets.
 
     Args:
         landmarks_3d: List of [x, y, z] coordinates
@@ -31,6 +31,7 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
         targets: List of target dictionaries with x, y, z, label keys
         show: Whether to call plt.show() (default True)
         ax: Optional matplotlib 3D axis to plot on. If None, creates new figure.
+        head_orientation: Dictionary with 'head_orientation_vector' and 'head_orientation_origin' keys
     """
     landmarks = np.array(landmarks_3d)
 
@@ -228,6 +229,22 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
         draw_vector_with_reference(elbow_idx, 'elbow_to_wrist', 'orange', 'elbow→wrist')
         draw_vector_with_reference(eye_idx, 'eye_to_wrist', 'purple', 'eye→wrist')
         draw_vector_with_reference(NOSE, 'nose_to_wrist', 'cyan', 'nose→wrist')
+
+    # Draw head orientation vector if available
+    if head_orientation and 'head_orientation_vector' in head_orientation and 'head_orientation_origin' in head_orientation:
+        head_vec = np.array(head_orientation['head_orientation_vector'])
+        head_origin = np.array(head_orientation['head_orientation_origin'])
+
+        # Skip if any values are None
+        if head_vec is not None and head_origin is not None and not np.any(np.isnan(head_vec)) and not np.any(np.isnan(head_origin)):
+            # Scale for visibility (similar to arm vectors)
+            head_vec_scaled = head_vec * 0.5
+
+            # Draw head orientation vector as yellow arrow from nose
+            ax.quiver(head_origin[0], head_origin[1], head_origin[2],
+                     head_vec_scaled[0], head_vec_scaled[1], head_vec_scaled[2],
+                     color='yellow', arrow_length_ratio=0.2, linewidth=4,
+                     label='head orientation')
 
     # Draw human facing direction indicator
     if len(landmarks) > LEFT_SHOULDER:

@@ -1,9 +1,9 @@
 {
   "trial": "trial_1",
   "camera": "cam1",
-  "pointing_hand": "unknown",
-  "total_frames": 19,
+  "pointing_hand": "left",
+  "total_frames": 21,
   "frame_distribution": {
-    "auto": 19
+    "left": 21
   }
 }

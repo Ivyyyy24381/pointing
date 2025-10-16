@@ -348,10 +348,10 @@ def load_depth_flexible(trial_path: str, camera_id: Optional[str], frame_number:
     if len(valid_depths) > 0:
         median_depth = np.median(valid_depths)
         mean_depth = valid_depths.mean()
-        print(f"✅ Loaded depth ({depth_img.shape}): {depth_path}")
-        print(f"   Depth stats: median={median_depth:.3f}m, mean={mean_depth:.3f}m, range=[{valid_depths.min():.3f}, {depth_img.max():.3f}]m")
+        # print(f"✅ Loaded depth ({depth_img.shape}): {depth_path}")
+        # print(f"   Depth stats: median={median_depth:.3f}m, mean={mean_depth:.3f}m, range=[{valid_depths.min():.3f}, {depth_img.max():.3f}]m")
     else:
-        print(f"✅ Loaded depth ({depth_img.shape}): {depth_path}")
+        # print(f"✅ Loaded depth ({depth_img.shape}): {depth_path}")
         print(f"   ⚠️ No valid depth values (all zeros)")
 
     return depth_img
