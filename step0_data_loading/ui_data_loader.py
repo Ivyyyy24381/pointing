@@ -39,7 +39,18 @@ class DataLoaderUI:
     def __init__(self, root, initial_folder=None):
         self.root = root
         self.root.title("Data Loader - UI Part 1 (Auto-Standardizing)")
-        self.root.geometry("1200x800")
+
+        # Make window size dynamic - fill 90% of screen
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = int(screen_width * 0.9)
+        window_height = int(screen_height * 0.9)
+
+        # Center the window
+        x_position = (screen_width - window_width) // 2
+        y_position = (screen_height - window_height) // 2
+
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
 
         self.data_manager = None
         self.trial_input_manager = TrialInputManager("trial_input")
@@ -48,6 +59,11 @@ class DataLoaderUI:
         self.current_frame = None
         self.available_frames = []
         self.trial_input_path = None  # Path to current trial in trial_input/
+
+        # Frame cache for faster loading
+        self.frame_cache = {}  # frame_num -> (color, depth)
+        self.cache_enabled = True
+        self.preload_window = 20  # Preload ±20 frames around current
 
         # Frame trimming
         self.trim_start = None  # Start frame for trimming
@@ -244,6 +260,10 @@ class DataLoaderUI:
             return
 
         self.current_trial = trial_name
+
+        # Clear frame cache when switching trials
+        self.frame_cache = {}
+
         trial_info = self.data_manager.get_trial_info(trial_name)
 
         # Update camera dropdown
@@ -266,6 +286,9 @@ class DataLoaderUI:
         camera = self.camera_var.get() if self.camera_var.get() else None
         self.current_camera = camera
 
+        # Clear frame cache when switching cameras
+        self.frame_cache = {}
+
         # Process trial to trial_input/ (auto-standardize)
         try:
             self.status_bar.config(text="Processing trial to trial_input/...")
@@ -287,6 +310,15 @@ class DataLoaderUI:
             # Save the trial_input path for sharing with other pages
             from pathlib import Path
             self.trial_input_path = Path(output_path)
+
+            # Save original trial path to config for Step 2 to use
+            self.save_trial_path_config(trial_info.trial_path, output_path)
+
+            # Also save source path directly in the trial_input folder
+            source_path_file = Path(output_path) / "source_path.txt"
+            with open(source_path_file, 'w') as f:
+                f.write(str(trial_info.trial_path))
+            print(f"💾 Saved source path to: {source_path_file}")
 
             print(f"✅ Standardized trial saved to: {output_path}")
 
@@ -460,7 +492,7 @@ class DataLoaderUI:
             traceback.print_exc()
 
     def load_current_frame(self):
-        """Load and display current frame FROM trial_input/"""
+        """Load and display current frame FROM trial_input/ (with caching)"""
         if not self.available_frames or not self.trial_input_manager:
             return
 
@@ -468,15 +500,26 @@ class DataLoaderUI:
         frame_num = self.available_frames[frame_idx]
 
         try:
-            self.status_bar.config(text=f"Loading frame {frame_num} from trial_input/...")
-            self.root.update()
+            # Check cache first
+            if self.cache_enabled and frame_num in self.frame_cache:
+                color, depth = self.frame_cache[frame_num]
+                cache_hit = True
+            else:
+                self.status_bar.config(text=f"Loading frame {frame_num} from trial_input/...")
+                self.root.update()
 
-            # Load frame from trial_input/ (standardized location)
-            color, depth = self.trial_input_manager.load_frame(
-                trial_name=self.current_trial,
-                camera_id=self.current_camera,
-                frame_number=frame_num
-            )
+                # Load frame from trial_input/ (standardized location)
+                color, depth = self.trial_input_manager.load_frame(
+                    trial_name=self.current_trial,
+                    camera_id=self.current_camera,
+                    frame_number=frame_num
+                )
+
+                # Add to cache
+                if self.cache_enabled:
+                    self.frame_cache[frame_num] = (color, depth)
+
+                cache_hit = False
 
             # Store current frame
             self.current_color = color
@@ -493,11 +536,48 @@ class DataLoaderUI:
             # Update info
             self.update_info(frame_num, color, depth)
 
-            self.status_bar.config(text=f"✅ Frame {frame_num} from trial_input/ ({frame_idx + 1}/{len(self.available_frames)})")
+            cache_msg = " (cached)" if cache_hit else ""
+            self.status_bar.config(text=f"✅ Frame {frame_num}{cache_msg} ({frame_idx + 1}/{len(self.available_frames)})")
+
+            # Preload surrounding frames in background
+            if self.cache_enabled and not cache_hit:
+                self.preload_surrounding_frames(frame_idx)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load frame {frame_num}:\n{e}")
             self.status_bar.config(text=f"Error loading frame {frame_num}")
+
+    def preload_surrounding_frames(self, current_idx):
+        """Preload frames around current position for faster browsing"""
+        # Determine range to preload
+        start_idx = max(0, current_idx - self.preload_window)
+        end_idx = min(len(self.available_frames) - 1, current_idx + self.preload_window)
+
+        # Get frame numbers to preload (that aren't already cached)
+        frames_to_load = []
+        for idx in range(start_idx, end_idx + 1):
+            frame_num = self.available_frames[idx]
+            if frame_num not in self.frame_cache:
+                frames_to_load.append(frame_num)
+
+        if not frames_to_load:
+            return
+
+        # Batch load frames
+        try:
+            loaded_frames = self.trial_input_manager.batch_load_frames(
+                trial_name=self.current_trial,
+                camera_id=self.current_camera,
+                frame_numbers=frames_to_load
+            )
+
+            # Add to cache
+            self.frame_cache.update(loaded_frames)
+
+            print(f"📦 Preloaded {len(loaded_frames)} frames (cache size: {len(self.frame_cache)})")
+
+        except Exception as e:
+            print(f"⚠️ Preload warning: {e}")
 
     def display_images(self, color, depth):
         """Display color and depth images"""
@@ -822,6 +902,17 @@ class DataLoaderUI:
 
         messagebox.showinfo("Success", f"Saved {len(self.current_detections)} detection(s) to:\n{output_file}")
         self.status_bar.config(text=f"💾 Saved detections to {output_file}")
+
+    def save_trial_path_config(self, original_path, processed_path):
+        """Save trial path configuration for Step 2 to use"""
+        config_path = Path.home() / ".pointing_config.json"
+        config = {
+            "original_trial_path": str(original_path),
+            "processed_trial_path": str(processed_path)
+        }
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+        print(f"💾 Saved trial path config to: {config_path}")
 
 
 def main():

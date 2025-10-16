@@ -20,7 +20,7 @@ def load_skeleton_data(json_path: str) -> dict:
         return json.load(f)
 
 
-def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None, show=True, ax=None, head_orientation=None):
+def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None, show=True, ax=None, head_orientation=None, elev=-55, azim=-90):
     """
     Plot 3D skeleton with arm vectors, head orientation, and targets.
 
@@ -32,6 +32,15 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
         show: Whether to call plt.show() (default True)
         ax: Optional matplotlib 3D axis to plot on. If None, creates new figure.
         head_orientation: Dictionary with 'head_orientation_vector' and 'head_orientation_origin' keys
+        elev: Elevation angle in degrees (default 15). Controls up/down viewing angle.
+              - 0° = view from horizon
+              - 90° = view from directly above
+              - Negative values = view from below
+        azim: Azimuth angle in degrees (default 45). Controls left/right viewing angle.
+              - 0° = view from +X axis
+              - 90° = view from +Y axis
+              - 180° or -180° = view from -X axis
+              - -90° = view from -Y axis
     """
     landmarks = np.array(landmarks_3d)
 
@@ -322,7 +331,10 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
 
         ax.set_xlim(-1.5, 1.5)
         ax.set_ylim(-2.5, 0.5)
-        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        ax.set_zlim(3,5)
+
+    # Set viewing angle
+    ax.view_init(elev=elev, azim=azim)
 
     ax.legend()
     plt.tight_layout()

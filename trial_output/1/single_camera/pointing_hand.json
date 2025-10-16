@@ -1,9 +1,0 @@
-{
-  "trial": "1",
-  "camera": "single_camera",
-  "pointing_hand": "right",
-  "total_frames": 28,
-  "frame_distribution": {
-    "right": 28
-  }
-}

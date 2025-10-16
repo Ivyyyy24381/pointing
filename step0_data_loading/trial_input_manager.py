@@ -125,6 +125,52 @@ class TrialInputManager:
 
         return color_img, depth_img
 
+    def batch_load_frames(self, trial_name: str, camera_id: Optional[str], frame_numbers: List[int]) -> dict:
+        """
+        Load multiple frames efficiently (batch loading with threading)
+
+        Args:
+            trial_name: Name of the trial
+            camera_id: Camera ID (if applicable)
+            frame_numbers: List of frame numbers to load
+
+        Returns:
+            Dictionary mapping frame_number -> (color_img, depth_img)
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        trial_path = self.get_trial_path(trial_name, camera_id)
+        color_folder = os.path.join(trial_path, "color")
+        depth_folder = os.path.join(trial_path, "depth")
+
+        def load_single_frame(frame_num):
+            """Load a single frame (color + depth)"""
+            color_path = os.path.join(color_folder, f"frame_{frame_num:06d}.png")
+            depth_path = os.path.join(depth_folder, f"frame_{frame_num:06d}.npy")
+
+            color_img = None
+            depth_img = None
+
+            if os.path.exists(color_path):
+                color_img = cv2.imread(color_path)
+
+            if os.path.exists(depth_path):
+                depth_img = np.load(depth_path)
+
+            return frame_num, (color_img, depth_img)
+
+        frames = {}
+
+        # Load frames in parallel using thread pool (8 workers for disk I/O)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(load_single_frame, num): num for num in frame_numbers}
+
+            for future in as_completed(futures):
+                frame_num, data = future.result()
+                frames[frame_num] = data
+
+        return frames
+
     def find_available_frames(self, trial_name: str, camera_id: Optional[str] = None) -> List[int]:
         """
         Find all available frame numbers in trial_input/

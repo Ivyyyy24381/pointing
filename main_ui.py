@@ -178,6 +178,9 @@ class MainUI:
             # Set the trial path
             self.page2_ui.trial_path = trial_path
 
+            # Load original path from metadata (for syncing results back)
+            self.page2_ui.load_original_path_from_config(trial_path)
+
             # Check for color folder
             color_folder = trial_path / "color"
             if not color_folder.exists():

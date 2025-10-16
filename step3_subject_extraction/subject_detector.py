@@ -60,17 +60,24 @@ class SubjectDetector:
             self._init_baby_detector()
 
     def _init_dog_detector(self):
-        """Initialize YOLO detector for dogs"""
+        """Initialize MediaPipe Pose for dog skeleton detection"""
         try:
-            from ultralytics import YOLO
-            self.yolo_model = YOLO('yolov8n.pt')
-            print(f"✅ YOLO model loaded for dog detection")
+            import mediapipe as mp
+            self.mp_pose = mp.solutions.pose
+            # Use same settings as human detection
+            self.pose = self.mp_pose.Pose(
+                static_image_mode=False,
+                model_complexity=1,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            print(f"✅ MediaPipe Pose loaded for dog skeleton detection")
         except ImportError:
-            print("⚠️ ultralytics not installed. Run: pip install ultralytics")
-            self.yolo_model = None
+            print("⚠️ mediapipe not installed. Run: pip install mediapipe")
+            self.pose = None
         except Exception as e:
-            print(f"⚠️ Failed to load YOLO model: {e}")
-            self.yolo_model = None
+            print(f"⚠️ Failed to load MediaPipe: {e}")
+            self.pose = None
 
     def _init_baby_detector(self):
         """Initialize MediaPipe detector for baby"""
@@ -156,41 +163,51 @@ class SubjectDetector:
     def _detect_dog(self, cropped_img: np.ndarray, y_offset: int,
                     depth_image: Optional[np.ndarray],
                     fx: float, fy: float, cx: float, cy: float) -> Optional[SubjectDetectionResult]:
-        """Detect dog using YOLO"""
-        if self.yolo_model is None:
+        """Detect dog skeleton using MediaPipe Pose"""
+        if self.pose is None:
             return None
 
-        # Run YOLO detection
-        results = self.yolo_model(cropped_img, verbose=False)
+        # Convert to RGB for MediaPipe
+        import cv2
+        image_rgb = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB) if cropped_img.shape[2] == 3 else cropped_img
 
-        DOG_CLASS = 16  # COCO dataset dog class
+        # Run MediaPipe detection on cropped (lower half) image
+        results = self.pose.process(image_rgb)
 
-        for result in results:
-            boxes = result.boxes
-            for box in boxes:
-                cls = int(box.cls[0])
-                conf = float(box.conf[0])
+        if results.pose_landmarks is None:
+            return None
 
-                if cls == DOG_CLASS and conf >= 0.5:
-                    # Get bounding box in cropped image
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+        # Extract 2D keypoints from cropped image
+        h, w = cropped_img.shape[:2]
+        keypoints_2d_cropped = []
 
-                    # Map bbox to original image coordinates
-                    bbox_original = (x1, y1 + y_offset, x2, y2 + y_offset)
+        for landmark in results.pose_landmarks.landmark:
+            x = landmark.x * w
+            y = landmark.y * h
+            visibility = landmark.visibility
+            keypoints_2d_cropped.append([x, y, visibility])
 
-                    # For now, just return bbox
-                    # TODO: Add DeepLabCut skeleton detection
-                    result = SubjectDetectionResult(
-                        subject_type='dog',
-                        bbox=bbox_original,
-                        keypoints_2d=None,  # Will add skeleton later
-                        keypoints_3d=None
-                    )
+        # Map to original image coordinates
+        keypoints_2d = self.map_keypoints_to_original(keypoints_2d_cropped, y_offset)
 
-                    return result
+        # Compute 3D keypoints if depth image available
+        keypoints_3d = None
+        if depth_image is not None:
+            keypoints_3d = self._compute_3d_keypoints(
+                keypoints_2d, depth_image, fx, fy, cx, cy
+            )
 
-        return None
+        # Compute bounding box from keypoints
+        bbox = self._compute_bbox_from_keypoints(keypoints_2d)
+
+        result = SubjectDetectionResult(
+            subject_type='dog',
+            bbox=bbox,
+            keypoints_2d=keypoints_2d,
+            keypoints_3d=keypoints_3d
+        )
+
+        return result
 
     def _detect_baby(self, cropped_img: np.ndarray, y_offset: int,
                      depth_image: Optional[np.ndarray],
@@ -200,6 +217,7 @@ class SubjectDetector:
             return None
 
         # Convert to RGB for MediaPipe
+        import cv2
         image_rgb = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB) if cropped_img.shape[2] == 3 else cropped_img
 
         # Run MediaPipe detection
@@ -221,15 +239,107 @@ class SubjectDetector:
         # Map to original image coordinates
         keypoints_2d = self.map_keypoints_to_original(keypoints_2d_cropped, y_offset)
 
-        # TODO: Add 3D computation using depth image
+        # Compute 3D keypoints if depth image available
+        keypoints_3d = None
+        if depth_image is not None:
+            keypoints_3d = self._compute_3d_keypoints(
+                keypoints_2d, depth_image, fx, fy, cx, cy
+            )
+
+        # Compute bounding box from keypoints
+        bbox = self._compute_bbox_from_keypoints(keypoints_2d)
 
         result = SubjectDetectionResult(
             subject_type='baby',
+            bbox=bbox,
             keypoints_2d=keypoints_2d,
-            keypoints_3d=None  # Will add 3D later
+            keypoints_3d=keypoints_3d
         )
 
         return result
+
+    def _compute_3d_keypoints(self, keypoints_2d: List[List[float]],
+                               depth_image: np.ndarray,
+                               fx: float, fy: float, cx: float, cy: float) -> List[List[float]]:
+        """
+        Convert 2D keypoints to 3D using depth image and camera intrinsics.
+
+        Args:
+            keypoints_2d: [[x, y, conf], ...] in pixels
+            depth_image: Depth in meters (H, W)
+            fx, fy: Focal lengths
+            cx, cy: Principal point
+
+        Returns:
+            [[x, y, z], ...] in meters (world coordinates)
+        """
+        keypoints_3d = []
+        h, w = depth_image.shape
+
+        for kp in keypoints_2d:
+            if len(kp) < 2:
+                keypoints_3d.append([0.0, 0.0, 0.0])
+                continue
+
+            x_pixel, y_pixel = int(kp[0]), int(kp[1])
+
+            # Bounds check
+            if x_pixel < 0 or x_pixel >= w or y_pixel < 0 or y_pixel >= h:
+                keypoints_3d.append([0.0, 0.0, 0.0])
+                continue
+
+            # Get depth value
+            z = depth_image[y_pixel, x_pixel]
+
+            # Check for valid depth
+            if z <= 0.0 or np.isnan(z) or np.isinf(z):
+                keypoints_3d.append([0.0, 0.0, 0.0])
+                continue
+
+            # Pinhole camera model: backproject to 3D
+            x_3d = (x_pixel - cx) * z / fx
+            y_3d = (y_pixel - cy) * z / fy
+            z_3d = z
+
+            keypoints_3d.append([float(x_3d), float(y_3d), float(z_3d)])
+
+        return keypoints_3d
+
+    def _compute_bbox_from_keypoints(self, keypoints_2d: List[List[float]]) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Compute bounding box from 2D keypoints.
+
+        Args:
+            keypoints_2d: [[x, y, conf], ...]
+
+        Returns:
+            (x1, y1, x2, y2) or None
+        """
+        if not keypoints_2d:
+            return None
+
+        valid_points = []
+        for kp in keypoints_2d:
+            if len(kp) >= 2:
+                x, y = kp[0], kp[1]
+                # Only use points with reasonable confidence if available
+                if len(kp) >= 3 and kp[2] > 0.3:
+                    valid_points.append((x, y))
+                elif len(kp) < 3:
+                    valid_points.append((x, y))
+
+        if not valid_points:
+            return None
+
+        xs = [p[0] for p in valid_points]
+        ys = [p[1] for p in valid_points]
+
+        x1 = int(min(xs))
+        y1 = int(min(ys))
+        x2 = int(max(xs))
+        y2 = int(max(ys))
+
+        return (x1, y1, x2, y2)
 
     def __del__(self):
         """Cleanup resources"""

@@ -42,13 +42,25 @@ from step0_data_loading.load_trial_data_flexible import (
 class SkeletonExtractorUI:
     """UI for skeleton extraction with MediaPipe."""
 
-    def __init__(self, root):
+    def __init__(self, root, trial_path=None):
         self.root = root
         self.root.title("Step 2: Skeleton Extraction")
-        self.root.geometry("1920x1000")  # Wider for 3-panel layout
+
+        # Make window size dynamic - fill 90% of screen
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = int(screen_width * 0.9)
+        window_height = int(screen_height * 0.9)
+
+        # Center the window
+        x_position = (screen_width - window_width) // 2
+        y_position = (screen_height - window_height) // 2
+
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
 
         # State variables
-        self.trial_path = None
+        self.trial_path = None  # Path to trial_input/ (standardized)
+        self.original_trial_path = None  # Original user input path from Step 0
         self.camera_id = None
         self.current_frame = 1
         self.total_frames = 0
@@ -93,6 +105,10 @@ class SkeletonExtractorUI:
         self.setup_ui()
         self.initialize_detector()
 
+        # Auto-load trial if provided
+        if trial_path:
+            self.root.after(100, lambda: self.load_trial_path(trial_path))
+
     def setup_ui(self):
         """Create the UI layout."""
         # Main container
@@ -123,11 +139,8 @@ class SkeletonExtractorUI:
     def setup_controls(self, parent):
         """Setup control panel."""
         # Trial loading
-        load_frame = ttk.LabelFrame(parent, text="Load Trial", padding=10)
+        load_frame = ttk.LabelFrame(parent, text="Trial Info", padding=10)
         load_frame.grid(row=0, column=0, sticky="ew", pady=5)
-
-        ttk.Button(load_frame, text="📁 Select Trial Folder",
-                  command=self.load_trial).pack(fill=tk.X, pady=2)
 
         self.trial_label = ttk.Label(load_frame, text="No trial loaded",
                                      foreground="gray")
@@ -433,18 +446,70 @@ class SkeletonExtractorUI:
 
         # Note: Human detection is always on (checkbox is disabled)
 
-    def load_trial(self):
-        """Load trial folder."""
-        folder = filedialog.askdirectory(
-            title="Select Trial Folder",
-            initialdir="trial_input"
-        )
+    def load_original_path_from_config(self, trial_path):
+        """Load the original user input path from metadata.json saved by Step 0."""
+        import json
+        import glob
 
-        if not folder:
-            return
+        print(f"\n🔍 Looking for source path in: {trial_path}")
 
-        # Convert to absolute path to ensure we can copy back to original location
-        trial_path = Path(folder).resolve()
+        # Try to find any metadata*.json file
+        metadata_files = list(trial_path.glob("metadata*.json"))
+        print(f"   Found {len(metadata_files)} metadata files: {metadata_files}")
+
+        if metadata_files:
+            metadata_file = metadata_files[0]  # Use the first one found
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+
+                original_path_str = metadata.get("trial_path")
+                if original_path_str:
+                    self.original_trial_path = Path(original_path_str).resolve()
+                    print(f"✅ Found original source path from metadata: {self.original_trial_path}")
+
+                    # Check if original path still exists
+                    if not self.original_trial_path.exists():
+                        print(f"⚠️ Warning: Original path no longer exists!")
+                        print(f"   Results will save to trial_output/ only")
+                        self.original_trial_path = None
+                    return
+
+            except Exception as e:
+                print(f"⚠️ Failed to load metadata: {e}")
+
+        # Fallback to source_path.txt (if saved)
+        source_path_file = trial_path / "source_path.txt"
+        if source_path_file.exists():
+            try:
+                with open(source_path_file, 'r') as f:
+                    original_path_str = f.read().strip()
+
+                self.original_trial_path = Path(original_path_str).resolve()
+                print(f"✅ Found original source path from txt: {self.original_trial_path}")
+
+                # Check if original path still exists
+                if not self.original_trial_path.exists():
+                    print(f"⚠️ Warning: Original path no longer exists!")
+                    print(f"   Results will save to trial_output/ only")
+                    self.original_trial_path = None
+                return
+
+            except Exception as e:
+                print(f"⚠️ Failed to load source path: {e}")
+
+        # No source info found
+        print(f"⚠️ No source path info found in {trial_path}")
+        print(f"   Results will save to trial_output/ only (not synced to original path)")
+        self.original_trial_path = None
+
+    def load_trial_path(self, trial_path):
+        """Load trial from a given path."""
+        # Convert to Path object if string
+        if isinstance(trial_path, str):
+            trial_path = Path(trial_path).resolve()
+        else:
+            trial_path = trial_path.resolve()
 
         # Check for color folder
         color_folder = trial_path / "color"
@@ -452,8 +517,15 @@ class SkeletonExtractorUI:
             messagebox.showerror("Error", "No 'color' folder found in selected directory")
             return
 
+        # Try to load original trial path from config
+        self.load_original_path_from_config(trial_path)
+
         # Load trial
         self.trial_path = trial_path
+        print(f"\n📂 Loaded trial from: {self.trial_path}")
+        print(f"   Absolute path: {self.trial_path.absolute()}")
+        if self.original_trial_path:
+            print(f"   Original user path: {self.original_trial_path}")
         self.color_images = sorted(color_folder.glob("frame_*.png"))
         self.total_frames = len(self.color_images)
 
@@ -807,6 +879,7 @@ class SkeletonExtractorUI:
 
         # Post-process: determine pointing arm for human results only
         selected_arm = self.arm_selection_var.get()
+        pointing_hand = None  # Initialize to None
 
         if self.human_results:
             if selected_arm == "auto":
@@ -859,17 +932,22 @@ class SkeletonExtractorUI:
                     if analysis:
                         analyses[frame_key] = analysis
 
-            # Export to CSV
+            # Save to trial_output (temporary working directory)
             camera_name = self.trial_path.name
             trial_name = self.trial_path.parent.name
 
-            if camera_name == trial_name and self.trial_path.parent.parent.name == "trial_input":
+            # Create trial_output path
+            if camera_name == trial_name:
                 output_path = Path("trial_output") / camera_name
             else:
                 output_path = Path("trial_output") / trial_name / camera_name
 
+            print(f"\n💾 Saving results to trial_output: {output_path}")
+            print(f"   Trial: {trial_name}")
+            print(f"   Camera: {camera_name}")
+
             output_path.mkdir(parents=True, exist_ok=True)
-            csv_path = output_path / "pointing_analysis.csv"
+            csv_path = output_path / "processed_gesture.csv"
 
             export_pointing_analysis_to_csv(
                 self.human_results,
@@ -907,16 +985,18 @@ class SkeletonExtractorUI:
                 trial_name=f"{trial_name}_{camera_name}"
             )
 
-        # Auto-save
+        # Auto-save to trial_output (temporary)
         self.auto_save_results(pointing_hand)
 
-        # Sync output files back to input folder
-        self.sync_output_to_input()
+        # Save 3D visualizations to trial_output/fig/
+        self.save_3d_visualizations()
 
-        # Reload current frame
-        self.load_frame(self.current_frame)
+        # Copy all results from trial_output back to original input path
+        self.sync_results_to_input()
 
-        # Update 3D plot
+        # Update display with already-processed results (don't reload/reprocess)
+        self.update_display()
+        self.update_info()
         self.update_3d_plot()
 
     def save_results(self):
@@ -978,16 +1058,14 @@ class SkeletonExtractorUI:
         if not self.trial_path:
             return
 
-        # Determine output directory (consistent with load_ground_plane_and_targets)
-        camera_name = self.trial_path.name  # e.g., "cam1" or "single_camera"
-        trial_name = self.trial_path.parent.name  # e.g., "trial_1" or "1"
+        # Save to trial_output (temporary working directory)
+        camera_name = self.trial_path.name
+        trial_name = self.trial_path.parent.name
 
-        # For single camera mode, if camera_name == trial_name, use parent's parent
-        if camera_name == trial_name and self.trial_path.parent.parent.name == "trial_input":
-            # Path is trial_input/single_camera, so just use single_camera once
+        # Create trial_output path
+        if camera_name == trial_name:
             output_path = Path("trial_output") / camera_name
         else:
-            # Normal case: trial_output/trial_name/camera_name
             output_path = Path("trial_output") / trial_name / camera_name
 
         output_path.mkdir(parents=True, exist_ok=True)
@@ -1074,83 +1152,135 @@ class SkeletonExtractorUI:
 
         print(f"\n✅ Auto-saved results to: {output_path}")
 
-    def sync_output_to_input(self):
-        """Sync output files back to original data source folder after processing."""
-        if not self.trial_path:
-            print("⚠️ No trial path set, skipping sync")
+    def save_3d_visualizations(self):
+        """Save 3D skeleton visualizations for all frames to /fig folder."""
+        if not self.trial_path or not self.human_results:
             return
 
-        import shutil
-
-        print(f"\n📂 Starting sync process...")
-        print(f"   self.trial_path = {self.trial_path}")
-        print(f"   self.trial_path type = {type(self.trial_path)}")
-
-        # Determine paths
+        # Save to trial_output
         camera_name = self.trial_path.name
         trial_name = self.trial_path.parent.name
 
-        print(f"   camera_name = {camera_name}")
-        print(f"   trial_name = {trial_name}")
-
-        # Output path (where files were saved in trial_output)
-        if camera_name == trial_name and self.trial_path.parent.parent.name == "trial_input":
+        if camera_name == trial_name:
             output_path = Path("trial_output") / camera_name
         else:
             output_path = Path("trial_output") / trial_name / camera_name
 
-        print(f"   output_path = {output_path}")
-        print(f"   output_path.exists() = {output_path.exists()}")
+        # Create fig directory in trial_output
+        fig_dir = output_path / "fig"
+        fig_dir.mkdir(parents=True, exist_ok=True)
 
-        if not output_path.exists():
-            print(f"⚠️ Output path does not exist: {output_path.absolute()}")
+        print(f"\n📊 Saving 3D visualizations to {fig_dir}...")
+
+        from step2_skeleton_extraction.visualize_skeleton_3d import plot_skeleton_3d
+        from step2_skeleton_extraction.pointing_analysis import compute_head_orientation
+
+        # Import matplotlib for saving
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+
+        total_frames = len(self.human_results)
+        saved_count = 0
+
+        for idx, (frame_key, result) in enumerate(self.human_results.items(), 1):
+            if result.landmarks_3d:
+                # Create new figure for this frame
+                fig = plt.figure(figsize=(10, 8))
+                ax = fig.add_subplot(111, projection='3d')
+
+                # Compute head orientation
+                head_orientation = None
+                try:
+                    head_vec, head_origin = compute_head_orientation(result.landmarks_3d)
+                    head_orientation = {
+                        'head_orientation_vector': head_vec.tolist(),
+                        'head_orientation_origin': head_origin.tolist()
+                    }
+                except Exception as e:
+                    pass
+
+                # Plot skeleton
+                try:
+                    plot_skeleton_3d(
+                        result.landmarks_3d,
+                        arm_vectors=result.arm_vectors,
+                        frame_name=f"{frame_key}",
+                        targets=self.targets,
+                        show=False,
+                        ax=ax,
+                        head_orientation=head_orientation
+                    )
+
+                    # Save figure
+                    output_file = fig_dir / f"{frame_key}.png"
+                    plt.savefig(output_file, dpi=100, bbox_inches='tight')
+                    plt.close(fig)
+                    saved_count += 1
+
+                    # Update progress every 10 frames
+                    if idx % 10 == 0:
+                        print(f"   Saved {idx}/{total_frames} frames...")
+
+                except Exception as e:
+                    print(f"   ⚠️ Failed to save {frame_key}: {e}")
+                    plt.close(fig)
+
+        print(f"✅ Saved {saved_count} 3D visualization frames to: {fig_dir}")
+
+    def sync_results_to_input(self):
+        """Copy all results from trial_output back to original input path."""
+        if not self.original_trial_path:
+            print(f"⚠️ No original path configured - skipping sync")
+            print(f"   Results remain in trial_output/")
             return
 
-        # Destination: the ORIGINAL folder where data was loaded from
-        # self.trial_path is an absolute path to the original data source
-        destination_path = self.trial_path
+        import shutil
 
-        print(f"\n📂 Syncing results back to original data source...")
-        print(f"   Source: {output_path.absolute()}")
-        print(f"   Destination: {destination_path.absolute()}")
-        print(f"   Destination exists: {destination_path.exists()}")
-        print(f"   Destination is writable: {os.access(destination_path, os.W_OK)}")
+        # Determine output_path in trial_output
+        camera_name = self.trial_path.name
+        trial_name = self.trial_path.parent.name
 
-        # Files to copy
-        files_to_sync = [
-            "skeleton_2d.json",
-            "pointing_analysis.csv",
+        if camera_name == trial_name:
+            source_path = Path("trial_output") / camera_name
+        else:
+            source_path = Path("trial_output") / trial_name / camera_name
+
+        destination_path = self.original_trial_path
+
+        # List of files/folders to copy
+        items_to_sync = [
+            "processed_gesture.csv",
             "2d_pointing_trace.png",
+            "skeleton_2d.json",
             "detection_summary.txt",
             "pointing_hand.json",
             "dog_detection_results.json",
-            "baby_detection_results.json"
+            "baby_detection_results.json",
+            "fig"  # entire folder
         ]
 
-        print(f"\n   Attempting to copy {len(files_to_sync)} files...")
+        print(f"\n📂 Syncing results from trial_output to original path...")
+        print(f"   Source: {source_path}")
+        print(f"   Destination: {destination_path}")
+
         copied_count = 0
-        for filename in files_to_sync:
-            src_file = output_path / filename
-            dst_file = destination_path / filename
+        # Copy each item
+        for item_name in items_to_sync:
+            src = source_path / item_name
+            dst = destination_path / item_name
 
-            print(f"\n   Checking {filename}:")
-            print(f"      Source: {src_file}")
-            print(f"      Source exists: {src_file.exists()}")
-
-            if src_file.exists():
-                print(f"      Destination: {dst_file}")
+            if src.exists():
                 try:
-                    shutil.copy2(src_file, dst_file)
-                    print(f"      ✓ Successfully copied!")
+                    if src.is_dir():
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dst)
+                    print(f"   ✓ Copied {item_name}")
                     copied_count += 1
                 except Exception as e:
-                    print(f"      ✗ Failed to copy: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"      ⊘ Skipped (source doesn't exist)")
+                    print(f"   ⚠️ Failed to copy {item_name}: {e}")
 
-        print(f"\n✅ Synced {copied_count}/{len(files_to_sync)} files back to original data source")
+        print(f"✅ Synced {copied_count} items to: {destination_path}")
 
     def update_display(self):
         """Update canvas display."""
@@ -1240,23 +1370,63 @@ class SkeletonExtractorUI:
                 import traceback
                 traceback.print_exc()
 
-        # Plot dog position if available (as a blue marker)
-        if self.current_dog_result and self.current_dog_result.bbox:
+        # Plot dog skeleton if available (blue)
+        if self.current_dog_result and self.current_dog_result.keypoints_3d:
             has_data = True
-            # TODO: Add 3D position from depth if available
-            # For now, just indicate dog is detected with text
-            self.plot_ax.text(0, -1, 0, 'Dog detected (2D only)', fontsize=10, color='blue')
+            self._plot_subject_skeleton_3d(
+                self.current_dog_result.keypoints_3d,
+                color='blue',
+                label='Dog'
+            )
 
         # Plot baby skeleton if available (yellow)
         if self.current_baby_result and self.current_baby_result.keypoints_3d:
             has_data = True
-            # TODO: Add baby skeleton visualization in yellow
-            self.plot_ax.text(0, -1.2, 0, 'Baby detected (3D TBD)', fontsize=10, color='yellow')
+            self._plot_subject_skeleton_3d(
+                self.current_baby_result.keypoints_3d,
+                color='yellow',
+                label='Baby'
+            )
 
         if not has_data:
             self.plot_ax.text(0, 0, 0, 'No 3D data', fontsize=14, ha='center')
 
         self.plot_canvas.draw()
+
+    def _plot_subject_skeleton_3d(self, keypoints_3d, color='blue', label='Subject'):
+        """Plot dog/baby skeleton in 3D."""
+        # MediaPipe connections
+        connections = [
+            (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),  # Arms
+            (11, 23), (12, 24), (23, 24),  # Torso
+            (23, 25), (25, 27), (24, 26), (26, 28),  # Legs
+            (0, 1), (1, 2), (2, 3), (0, 4), (4, 5), (5, 6)  # Face
+        ]
+
+        # Draw connections
+        for connection in connections:
+            idx1, idx2 = connection
+            if idx1 < len(keypoints_3d) and idx2 < len(keypoints_3d):
+                kp1 = keypoints_3d[idx1]
+                kp2 = keypoints_3d[idx2]
+
+                # Check if both keypoints are valid (not [0,0,0])
+                if (kp1[0] != 0 or kp1[1] != 0 or kp1[2] != 0) and \
+                   (kp2[0] != 0 or kp2[1] != 0 or kp2[2] != 0):
+                    self.plot_ax.plot(
+                        [kp1[0], kp2[0]],
+                        [kp1[1], kp2[1]],
+                        [kp1[2], kp2[2]],
+                        color=color, linewidth=2
+                    )
+
+        # Draw keypoints
+        valid_kps = [kp for kp in keypoints_3d if (kp[0] != 0 or kp[1] != 0 or kp[2] != 0)]
+        if valid_kps:
+            xs = [kp[0] for kp in valid_kps]
+            ys = [kp[1] for kp in valid_kps]
+            zs = [kp[2] for kp in valid_kps]
+            self.plot_ax.scatter(xs, ys, zs, c=color, marker='o', s=50, label=label)
 
     def draw_skeleton(self, image, result):
         """Draw skeleton on image."""
@@ -1384,31 +1554,52 @@ class SkeletonExtractorUI:
         return img
 
     def draw_dog_detection(self, image, result):
-        """Draw dog bounding box on image (blue)."""
+        """Draw dog skeleton on image (blue)."""
         img = image.copy()
 
-        # Draw bounding box if available
-        if result.bbox:
-            x1, y1, x2, y2 = result.bbox
-            # Draw bbox in blue
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 3)
+        # Draw skeleton keypoints if available
+        if result.keypoints_2d:
+            # MediaPipe connections (same as human/baby)
+            connections = [
+                (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),  # Arms
+                (11, 23), (12, 24), (23, 24),  # Torso
+                (23, 25), (25, 27), (24, 26), (26, 28),  # Legs
+                (0, 1), (1, 2), (2, 3), (0, 4), (4, 5), (5, 6)  # Face
+            ]
+
+            # Draw connections in blue
+            for connection in connections:
+                idx1, idx2 = connection
+                if idx1 < len(result.keypoints_2d) and idx2 < len(result.keypoints_2d):
+                    kp1 = result.keypoints_2d[idx1]
+                    kp2 = result.keypoints_2d[idx2]
+
+                    if len(kp1) >= 3 and len(kp2) >= 3:
+                        x1, y1, conf1 = kp1[:3]
+                        x2, y2, conf2 = kp2[:3]
+
+                        if conf1 > 0.5 and conf2 > 0.5:
+                            pt1 = (int(x1), int(y1))
+                            pt2 = (int(x2), int(y2))
+                            cv2.line(img, pt1, pt2, (255, 0, 0), 2)  # Blue lines
+
+            # Draw keypoints in blue
+            for kp in result.keypoints_2d:
+                if len(kp) >= 3:
+                    x, y, conf = kp[:3]
+                    if conf > 0.5:
+                        cv2.circle(img, (int(x), int(y)), 4, (255, 0, 0), -1)  # Blue dots
 
             # Draw label
-            label = "Dog"
-            cv2.putText(img, label, (x1, y1 - 10),
+            cv2.putText(img, "Dog", (10, 90),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
-            # Draw center point
-            center_x = (x1 + x2) // 2
-            center_y = (y1 + y2) // 2
-            cv2.circle(img, (center_x, center_y), 8, (255, 0, 0), -1)
-
-        # TODO: Draw skeleton keypoints if available
-        # if result.keypoints_2d:
-        #     for kp in result.keypoints_2d:
-        #         x, y, conf = kp
-        #         if conf > 0.5:
-        #             cv2.circle(img, (int(x), int(y)), 4, (255, 0, 0), -1)
+        # Draw bounding box if available
+        elif result.bbox:
+            x1, y1, x2, y2 = result.bbox
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 3)
+            cv2.putText(img, "Dog", (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
         return img
 
