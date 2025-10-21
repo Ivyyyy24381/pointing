@@ -65,15 +65,15 @@ class DeepLabCutDogDetector:
         # Run SuperAnimal Quadruped detection with built-in detector
         print("\n🔄 Running SuperAnimal Quadruped detection...")
         try:
+            # API: video_inference_superanimal(videos, superanimal_name, **kwargs)
             output = self.dlc.video_inference_superanimal(
                 [video_path],
-                model_type='superanimal_quadruped',
+                'superanimal_quadruped',  # superanimal_name (not model_type!)
                 model_name="hrnet_w32",
                 detector_name="fasterrcnn_resnet50_fpn_v2",  # Built-in detector!
-                max_individuals=1,  # Detect one dog
                 plot_trajectories=True,
-                batch_size=4,
-                video_adapt=False
+                video_adapt=False,
+                pcutoff=0.3  # Confidence threshold
             )
 
             print(f"✅ Detection complete!")

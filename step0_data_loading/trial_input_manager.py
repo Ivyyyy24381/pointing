@@ -161,8 +161,8 @@ class TrialInputManager:
 
         frames = {}
 
-        # Load frames in parallel using thread pool (8 workers for disk I/O)
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        # Load frames in parallel using thread pool (Quick Win #2: Increased to 16 for better I/O parallelism)
+        with ThreadPoolExecutor(max_workers=16) as executor:
             futures = {executor.submit(load_single_frame, num): num for num in frame_numbers}
 
             for future in as_completed(futures):

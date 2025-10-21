@@ -12,31 +12,28 @@ numpy>=1.24.0,<2.0.0
 opencv-python>=4.8.0
 Pillow>=10.0.0
 
-# Step 0: Data Loading
+# Step 0: Data Loading & Target Detection
 pyrealsense2>=2.54.0  # Optional: For live RealSense camera capture
-
-# Step 0: Target Detection
-ultralytics>=8.0.0  # YOLOv8 for cup/target detection
-torch>=2.0.0  # Required by YOLO
-torchvision>=0.15.0
+ultralytics>=8.0.0     # YOLOv8 for cup/target detection
+torch>=2.0.0           # Required by YOLO
+torchvision>=0.15.0    # Required by YOLO
 
 # Step 2: Skeleton Extraction
 mediapipe>=0.10.0  # Human pose detection
+scipy>=1.10.0      # For plane fitting and spatial calculations
 
-# Step 3: Subject Extraction (Optional)
-# SAM2 - Install from source:
-# git clone https://github.com/facebookresearch/segment-anything-2.git thirdparty/sam2
-# cd thirdparty/sam2 && pip install -e .
-
-# Step 4: Calculation
-scipy>=1.10.0  # For distance calculations
+# Step 3: Subject Detection
+deeplabcut>=3.0.0  # Dog skeleton detection using SuperAnimal Quadruped model
 
 # Visualization
-matplotlib>=3.7.0
-open3d>=0.17.0  # For point cloud visualization
+matplotlib>=3.7.0  # For 2D/3D plotting
+open3d>=0.17.0     # Optional: For point cloud visualization
 
-# GUI
-tkinter  # Usually included with Python
+# Data handling
+pandas>=2.0.0      # For CSV export and data processing
 
-# Development
+# GUI - tkinter is included with most Python installations on macOS
+# If tkinter is not available, install Python from python.org
+
+# Development (Optional)
 pytest>=7.0.0  # For testing

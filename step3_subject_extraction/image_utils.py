@@ -4,7 +4,7 @@ Image utilities for lower-half processing
 import numpy as np
 
 
-def crop_to_lower_half(image, crop_ratio=0.5):
+def crop_to_lower_half(image, crop_ratio=0.6):
     """
     Crop image to lower half for baby detection (avoids detecting adults).
 

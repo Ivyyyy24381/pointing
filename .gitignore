@@ -1,9 +1,86 @@
-*.png
-*.npy
+# Python
+__pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Data files (large/temporary)
+*.npy
 *.raw
 *.mp4
+*.avi
+
+# Model weights (download separately)
 *.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+
+# Output directories
+trial_input/
+trial_output/
+runs/
+output/
+results/
+
+# Images (except documentation)
+*.png
+*.jpg
+*.jpeg
+!docs/**/*.png
+!docs/**/*.jpg
+
+# Generated data files
 *.json
+*.csv
 *.txt
-*.json
+
+# But keep important config/documentation files
+!requirements.txt
+!README.md
+!*.md
+!.gitignore
+!.gitattributes
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# SAM2 checkpoints (optional downloads)
+thirdparty/segment-anything-2/checkpoints/*.pt

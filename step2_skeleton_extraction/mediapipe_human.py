@@ -84,7 +84,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
 
         # Lower-half processing (for baby detection)
         self.lower_half_only = lower_half_only
-        self.crop_ratio = 0.5  # Keep lower 50% of image
+        self.crop_ratio = 0.6  # Keep lower 50% of image
 
         # History tracking for optical flow
         self.landmark_history = []  # List of past landmarks
@@ -225,15 +225,15 @@ class MediaPipeHumanDetector(SkeletonDetector):
         RIGHT_HIP = 24
         h, w = depth_image.shape[:2]
 
-        print(f"\n🔍 HYBRID 3D COMPUTATION DEBUG:")
-        print(f"   Depth image shape: {depth_image.shape}")
+        # print(f"\n🔍 HYBRID 3D COMPUTATION DEBUG:")
+        # print(f"   Depth image shape: {depth_image.shape}")
 
         # Step 1: Get hip center depth from depth image
         left_hip_2d = landmarks_2d[LEFT_HIP]
         right_hip_2d = landmarks_2d[RIGHT_HIP]
 
-        print(f"   Left hip 2D (pixel):  ({left_hip_2d[0]:.1f}, {left_hip_2d[1]:.1f})")
-        print(f"   Right hip 2D (pixel): ({right_hip_2d[0]:.1f}, {right_hip_2d[1]:.1f})")
+        # print(f"   Left hip 2D (pixel):  ({left_hip_2d[0]:.1f}, {left_hip_2d[1]:.1f})")
+        # print(f"   Right hip 2D (pixel): ({right_hip_2d[0]:.1f}, {right_hip_2d[1]:.1f})")
 
         # Get depth at hip positions
         x_left = int(np.clip(left_hip_2d[0], 0, w - 1))
@@ -244,8 +244,8 @@ class MediaPipeHumanDetector(SkeletonDetector):
         depth_left = depth_image[y_left, x_left]
         depth_right = depth_image[y_right, x_right]
 
-        print(f"   Left hip depth:  {depth_left:.4f} m at pixel ({x_left}, {y_left})")
-        print(f"   Right hip depth: {depth_right:.4f} m at pixel ({x_right}, {y_right})")
+        # print(f"   Left hip depth:  {depth_left:.4f} m at pixel ({x_left}, {y_left})")
+        # print(f"   Right hip depth: {depth_right:.4f} m at pixel ({x_right}, {y_right})")
 
         # Average valid depths
         valid_depths = []
@@ -260,7 +260,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
             return self._compute_3d_from_depth(landmarks_2d, depth_image, fx, fy, cx, cy)
 
         hip_center_depth = np.mean(valid_depths)
-        print(f"   Hip center depth: {hip_center_depth:.4f} m (average of {len(valid_depths)} valid depths)")
+        # print(f"   Hip center depth: {hip_center_depth:.4f} m (average of {len(valid_depths)} valid depths)")
 
         # Step 2: Get hip center in 2D (for camera frame origin)
         hip_center_2d_x = (left_hip_2d[0] + right_hip_2d[0]) / 2
@@ -322,7 +322,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
                     LEFT_WRIST: "LEFT_WRIST",
                     RIGHT_WRIST: "RIGHT_WRIST"
                 }
-                print(f"  Landmark {idx:2d} ({landmark_names[idx]:15s}): MediaPipe ({x_person:+.4f}, {y_person:+.4f}, {z_person:+.4f}) → Camera ({x_cam:+.4f}, {y_cam:+.4f}, {z_cam:+.4f})")
+                # print(f"  Landmark {idx:2d} ({landmark_names[idx]:15s}): MediaPipe ({x_person:+.4f}, {y_person:+.4f}, {z_person:+.4f}) → Camera ({x_cam:+.4f}, {y_cam:+.4f}, {z_cam:+.4f})")
 
             landmarks_3d.append((float(x_cam), float(y_cam), float(z_cam)))
 
@@ -332,8 +332,8 @@ class MediaPipeHumanDetector(SkeletonDetector):
             (landmarks_3d[LEFT_HIP][1] + landmarks_3d[RIGHT_HIP][1]) / 2,
             (landmarks_3d[LEFT_HIP][2] + landmarks_3d[RIGHT_HIP][2]) / 2
         )
-        print(f"  Hip center from depth: ({hip_center_cam_x:+.4f}, {hip_center_cam_y:+.4f}, {hip_center_cam_z:+.4f})")
-        print(f"  Hip center computed:   ({computed_hip_center[0]:+.4f}, {computed_hip_center[1]:+.4f}, {computed_hip_center[2]:+.4f})")
+        # print(f"  Hip center from depth: ({hip_center_cam_x:+.4f}, {hip_center_cam_y:+.4f}, {hip_center_cam_z:+.4f})")
+        # print(f"  Hip center computed:   ({computed_hip_center[0]:+.4f}, {computed_hip_center[1]:+.4f}, {computed_hip_center[2]:+.4f})")
 
         return landmarks_3d
 

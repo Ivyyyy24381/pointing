@@ -118,7 +118,7 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
                           c='yellow', marker='o', s=100, edgecolors='black', linewidths=2,
                           label='Center' if idx == center_indices[0] else '')
 
-    # Plot hip center as a large magenta marker
+    # Plot hip center as small marker
     LEFT_HIP = 23
     RIGHT_HIP = 24
     if LEFT_HIP < len(landmarks) and RIGHT_HIP < len(landmarks):
@@ -127,8 +127,8 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
         if not (np.all(left_hip == 0) or np.all(right_hip == 0)):
             hip_center = (left_hip + right_hip) / 2.0
             ax.scatter([hip_center[0]], [hip_center[1]], [hip_center[2]],
-                      c='magenta', marker='X', s=300, edgecolors='black', linewidths=3,
-                      label='Hip Center (origin)', zorder=10)
+                      c='magenta', marker='X', s=200, edgecolors='black', linewidths=2,
+                      label='Hip Center', zorder=10)
 
     # Plot arm vectors if available (all 4 representations)
     if arm_vectors and arm_vectors.get('wrist_location'):
@@ -329,9 +329,9 @@ def plot_skeleton_3d(landmarks_3d, arm_vectors=None, frame_name="", targets=None
         mid_y = (valid_points[:, 1].max() + valid_points[:, 1].min()) * 0.5
         mid_z = (valid_points[:, 2].max() + valid_points[:, 2].min()) * 0.5
 
-        ax.set_xlim(-1.5, 1.5)
-        ax.set_ylim(-2.5, 0.5)
-        ax.set_zlim(3,5)
+        ax.set_xlim(-2.5, 2.5)
+        ax.set_ylim(-3.5, 1.5)
+        ax.set_zlim(1, 5)
 
     # Set viewing angle
     ax.view_init(elev=elev, azim=azim)

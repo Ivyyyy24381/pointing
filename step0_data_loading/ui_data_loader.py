@@ -289,26 +289,40 @@ class DataLoaderUI:
         # Clear frame cache when switching cameras
         self.frame_cache = {}
 
-        # Process trial to trial_input/ (auto-standardize)
+        # Process trial to trial_input/ (only needed for Page 2, optional for Page 1)
         try:
-            self.status_bar.config(text="Processing trial to trial_input/...")
-            self.root.update()
-
             # Import process_trial
-            from process_trial import process_trial, find_all_frames
+            from process_trial import find_all_frames
 
             trial_info = self.data_manager.get_trial_info(self.current_trial)
 
-            # Create standardized trial_input folder
-            output_path = process_trial(
-                trial_path=trial_info.trial_path,
-                camera_id=camera,
-                output_base="trial_input",
-                frame_range=None  # Process all frames
+            # Check if trial is already processed to avoid re-processing
+            trial_name = os.path.basename(trial_info.trial_path)
+            if camera:
+                expected_output = Path("trial_input") / trial_name / camera
+            else:
+                expected_output = Path("trial_input") / trial_name / "single_camera"
+
+            # Check if processed trial already exists
+            already_processed = (
+                expected_output.exists() and
+                (expected_output / "color").exists() and
+                (expected_output / "depth").exists() and
+                len(list((expected_output / "color").glob("frame_*.png"))) > 0
             )
 
+            if already_processed:
+                # Skip initial processing - Page 1 shows RAW data anyway
+                # Processing will happen when user trims or when Page 2 loads
+                output_path = str(expected_output)
+                self.status_bar.config(text=f"📂 Viewing raw data (processed version exists)")
+            else:
+                # No processed version yet - that's fine for Page 1
+                # We'll process when needed (trimming or Page 2)
+                output_path = str(expected_output)  # Path where it WILL be saved
+                self.status_bar.config(text=f"📂 Viewing raw data (will process on trim/save)")
+
             # Save the trial_input path for sharing with other pages
-            from pathlib import Path
             self.trial_input_path = Path(output_path)
 
             # Save original trial path to config for Step 2 to use
@@ -316,17 +330,17 @@ class DataLoaderUI:
 
             # Also save source path directly in the trial_input folder
             source_path_file = Path(output_path) / "source_path.txt"
+            # Create parent directories if they don't exist
+            source_path_file.parent.mkdir(parents=True, exist_ok=True)
             with open(source_path_file, 'w') as f:
                 f.write(str(trial_info.trial_path))
-            print(f"💾 Saved source path to: {source_path_file}")
 
-            print(f"✅ Standardized trial saved to: {output_path}")
-
-            # Now find frames in trial_input (standardized location)
-            self.status_bar.config(text="Loading standardized data...")
+            # Find frames from ORIGINAL RAW DATA for browsing/trimming
+            # (Page 1 shows raw data, trimming saves to trial_input)
+            self.status_bar.config(text="Loading frames from raw data...")
             self.root.update()
 
-            # Find frames from trial_input
+            from process_trial import find_all_frames
             self.available_frames = find_all_frames(trial_info.trial_path, camera)
 
             if self.available_frames:
@@ -338,6 +352,9 @@ class DataLoaderUI:
 
                 # Load first frame
                 self.load_current_frame()
+
+                # Quick Win #3: Aggressively preload first 40 frames in background
+                self.aggressive_preload_on_start()
             else:
                 self.status_bar.config(text="No frames found")
                 messagebox.showwarning("Warning", "No frames found for this trial/camera")
@@ -445,7 +462,6 @@ class DataLoaderUI:
             # Remove old frames if directory exists
             if os.path.exists(old_output_path):
                 import shutil
-                print(f"🗑️ Clearing old frames from: {old_output_path}")
                 shutil.rmtree(old_output_path)
 
             # Import process_trial
@@ -460,11 +476,7 @@ class DataLoaderUI:
             )
 
             # Save the trial_input path
-            from pathlib import Path
             self.trial_input_path = Path(output_path)
-
-            print(f"✅ Trimmed trial saved to: {output_path}")
-            print(f"   Frames: {start_frame} to {end_frame} ({num_frames} frames)")
 
             # Reload frames from trial_input
             self.available_frames = find_all_frames(trial_info.trial_path, self.current_camera)
@@ -492,8 +504,8 @@ class DataLoaderUI:
             traceback.print_exc()
 
     def load_current_frame(self):
-        """Load and display current frame FROM trial_input/ (with caching)"""
-        if not self.available_frames or not self.trial_input_manager:
+        """Load and display current frame FROM RAW DATA (for Page 1 browsing/trimming)"""
+        if not self.available_frames or not self.data_manager:
             return
 
         frame_idx = int(self.frame_slider.get())
@@ -505,15 +517,15 @@ class DataLoaderUI:
                 color, depth = self.frame_cache[frame_num]
                 cache_hit = True
             else:
-                self.status_bar.config(text=f"Loading frame {frame_num} from trial_input/...")
+                self.status_bar.config(text=f"Loading frame {frame_num} from raw data...")
                 self.root.update()
 
-                # Load frame from trial_input/ (standardized location)
-                color, depth = self.trial_input_manager.load_frame(
-                    trial_name=self.current_trial,
-                    camera_id=self.current_camera,
-                    frame_number=frame_num
-                )
+                # Load frame from ORIGINAL RAW DATA (not trial_input!)
+                from load_trial_data_flexible import load_color_flexible, load_depth_flexible
+                trial_info = self.data_manager.get_trial_info(self.current_trial)
+
+                color = load_color_flexible(trial_info.trial_path, self.current_camera, frame_num)
+                depth = load_depth_flexible(trial_info.trial_path, self.current_camera, frame_num)
 
                 # Add to cache
                 if self.cache_enabled:
@@ -547,6 +559,45 @@ class DataLoaderUI:
             messagebox.showerror("Error", f"Failed to load frame {frame_num}:\n{e}")
             self.status_bar.config(text=f"Error loading frame {frame_num}")
 
+    def aggressive_preload_on_start(self):
+        """Quick Win #3: Aggressively preload first 40 frames from RAW DATA"""
+        if not self.cache_enabled or not self.available_frames or not self.data_manager:
+            return
+
+        # Preload first 40 frames (or all frames if fewer)
+        num_to_preload = min(40, len(self.available_frames))
+        frames_to_load = []
+
+        for idx in range(num_to_preload):
+            frame_num = self.available_frames[idx]
+            if frame_num not in self.frame_cache:
+                frames_to_load.append(frame_num)
+
+        if not frames_to_load:
+            return
+
+        # Background thread to avoid blocking UI
+        def preload_thread():
+            try:
+                from load_trial_data_flexible import load_color_flexible, load_depth_flexible
+                trial_info = self.data_manager.get_trial_info(self.current_trial)
+
+                # Load frames from raw data
+                for frame_num in frames_to_load:
+                    try:
+                        color = load_color_flexible(trial_info.trial_path, self.current_camera, frame_num)
+                        depth = load_depth_flexible(trial_info.trial_path, self.current_camera, frame_num)
+                        self.frame_cache[frame_num] = (color, depth)
+                    except Exception:
+                        pass  # Skip frames that fail to load
+            except Exception:
+                pass  # Silently ignore errors
+
+        # Run in background thread
+        import threading
+        thread = threading.Thread(target=preload_thread, daemon=True)
+        thread.start()
+
     def preload_surrounding_frames(self, current_idx):
         """Preload frames around current position for faster browsing"""
         # Determine range to preload
@@ -574,10 +625,9 @@ class DataLoaderUI:
             # Add to cache
             self.frame_cache.update(loaded_frames)
 
-            print(f"📦 Preloaded {len(loaded_frames)} frames (cache size: {len(self.frame_cache)})")
-
         except Exception as e:
-            print(f"⚠️ Preload warning: {e}")
+            # Silently ignore preload errors - not critical
+            pass
 
     def display_images(self, color, depth):
         """Display color and depth images"""
@@ -831,6 +881,24 @@ class DataLoaderUI:
             messagebox.showwarning("Warning", "No frame loaded")
             return
 
+        # Warn if not exactly 4 targets
+        if len(self.current_detections) < 4:
+            response = messagebox.askyesno(
+                "Warning",
+                f"Only {len(self.current_detections)} target(s) detected (expected 4).\n\n"
+                "Ground plane correction may not work properly.\n\n"
+                "Continue saving anyway?"
+            )
+            if not response:
+                return
+        elif len(self.current_detections) > 4:
+            # This shouldn't happen now that we filter to 4, but keep as safeguard
+            messagebox.showwarning(
+                "Warning",
+                f"More than 4 targets detected ({len(self.current_detections)}).\n"
+                "This may cause issues. Please review the detections."
+            )
+
         # Create output directory
         output_dir = Path("trial_output") / self.current_trial
         if self.current_camera:
@@ -875,11 +943,7 @@ class DataLoaderUI:
                 )
 
                 R = compute_ground_plane_transform(detections_array)
-            except ImportError as e:
-                print(f"⚠️  Could not import ground_plane_correction: {e}")
-                R = None
-            except Exception as e:
-                print(f"⚠️  Error computing ground plane transform: {e}")
+            except (ImportError, Exception):
                 R = None
 
             if R is not None:
@@ -897,8 +961,9 @@ class DataLoaderUI:
                         'description': 'Rotation matrix to align ground plane to horizontal'
                     }, f, indent=2)
 
-                print(f"✅ Computed ground plane correction: {transform_info['angle_deg']:.2f}° tilt")
-                print(f"💾 Saved transformation to: {transform_file}")
+                self.status_bar.config(
+                    text=f"💾 Saved detections with ground plane correction ({transform_info['angle_deg']:.1f}° tilt)"
+                )
 
         messagebox.showinfo("Success", f"Saved {len(self.current_detections)} detection(s) to:\n{output_file}")
         self.status_bar.config(text=f"💾 Saved detections to {output_file}")
@@ -912,7 +977,6 @@ class DataLoaderUI:
         }
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
-        print(f"💾 Saved trial path config to: {config_path}")
 
 
 def main():

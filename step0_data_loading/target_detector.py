@@ -95,7 +95,8 @@ class TargetDetector:
     def detect(self, color_img: np.ndarray, depth_img: Optional[np.ndarray] = None,
                target_label: str = "cup",
                fx: float = 615.0, fy: float = 615.0,
-               cx: float = 320.0, cy: float = 240.0) -> List[Detection]:
+               cx: float = 320.0, cy: float = 240.0,
+               max_bbox_area_ratio: float = 0.15) -> List[Detection]:
         """
         Detect targets in color image and compute 3D positions.
 
@@ -105,6 +106,8 @@ class TargetDetector:
             target_label: Label to filter detections (default: "cup")
             fx, fy: Focal lengths in pixels
             cx, cy: Principal point
+            max_bbox_area_ratio: Maximum bbox area as ratio of image area (default: 0.15)
+                               Targets larger than this are filtered out
 
         Returns:
             List of Detection objects with 3D positions if depth provided
@@ -114,6 +117,10 @@ class TargetDetector:
 
         # Run detection
         results = self.model(color_img, verbose=False)
+
+        # Get image dimensions for size filtering
+        img_height, img_width = color_img.shape[:2]
+        img_area = img_height * img_width
 
         # Parse detections
         detections = []
@@ -126,6 +133,17 @@ class TargetDetector:
                 # Filter by label and confidence
                 if label == target_label and conf >= self.confidence_threshold:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+                    # Filter out targets that are too large
+                    bbox_width = x2 - x1
+                    bbox_height = y2 - y1
+                    bbox_area = bbox_width * bbox_height
+                    bbox_area_ratio = bbox_area / img_area
+
+                    if bbox_area_ratio > max_bbox_area_ratio:
+                        print(f"⚠️ Filtered out large target: {bbox_area_ratio:.2%} of image (max: {max_bbox_area_ratio:.2%})")
+                        continue
+
                     det = Detection(x1, y1, x2, y2, conf, label)
 
                     # Compute 3D position if depth available
@@ -161,6 +179,20 @@ class TargetDetector:
                                     det.depth = depth_value
 
                     detections.append(det)
+
+        # Filter: If more than 4 targets detected, keep only the 4 smallest
+        # (Large bounding boxes are likely humans misidentified as targets)
+        if len(detections) > 4:
+            print(f"⚠️ Detected {len(detections)} targets, filtering to keep only 4 smallest")
+
+            # Sort by bounding box area (smallest first)
+            detections_with_area = [(det, (det.x2 - det.x1) * (det.y2 - det.y1)) for det in detections]
+            detections_with_area.sort(key=lambda x: x[1])  # Sort by area
+
+            # Keep only the 4 smallest
+            detections = [det for det, area in detections_with_area[:4]]
+
+            print(f"✅ Kept 4 smallest targets (filtered out {len(detections_with_area) - 4} large ones)")
 
         return detections
 

@@ -58,7 +58,19 @@ class MainUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Pointing Gesture Analysis - Main UI")
-        self.root.geometry("1920x1080")
+
+        # Adaptive window sizing - fits any screen resolution
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        window_width = int(screen_width * 0.8)  # 80% of screen width
+        window_height = int(screen_height * 0.8)  # 80% of screen height
+
+        # Center the window
+        x_position = (screen_width - window_width) // 2
+        y_position = (screen_height - window_height) // 2
+
+        self.root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+        self.root.minsize(1024, 768)  # Minimum usable size
 
         # Create main notebook (tabs)
         self.notebook = ttk.Notebook(self.root)
@@ -88,15 +100,15 @@ class MainUI:
         ttk.Label(
             header_frame,
             text="📍 Page 1: Target Detection",
-            font=("Arial", 14, "bold"),
+            font=("Arial", 16, "bold"),
             foreground="blue"
         ).pack(anchor=tk.W)
 
         ttk.Label(
             header_frame,
             text="1. Load trial data  →  2. Detect and save targets  →  3. Switch to Page 2 for skeleton processing",
-            font=("Arial", 10),
-            foreground="gray"
+            font=("Arial", 11),
+            foreground="#4A4A4A"
         ).pack(anchor=tk.W, pady=2)
 
         ttk.Separator(page1_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=5)
@@ -120,15 +132,15 @@ class MainUI:
         ttk.Label(
             header_frame,
             text="🦴 Page 2: Skeleton Processing & 3D Visualization",
-            font=("Arial", 14, "bold"),
+            font=("Arial", 16, "bold"),
             foreground="green"
         ).pack(anchor=tk.W)
 
         ttk.Label(
             header_frame,
             text="1. Load trial  →  2. Process all frames (auto-saves)  →  3. View 3D skeleton with targets",
-            font=("Arial", 10),
-            foreground="gray"
+            font=("Arial", 11),
+            foreground="#4A4A4A"
         ).pack(anchor=tk.W, pady=2)
 
         ttk.Separator(page2_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=5)
@@ -148,20 +160,9 @@ class MainUI:
             self.status_bar.config(text="Page 1: Load trial and detect targets")
         elif current_tab == 1:
             # Switched to Page 2
-            # Debug: Check what trial_input_path is
-            print(f"\n🔍 Debug: Checking for trial from Page 1...")
-            print(f"   hasattr trial_input_path: {hasattr(self.page1_ui, 'trial_input_path')}")
-            if hasattr(self.page1_ui, 'trial_input_path'):
-                print(f"   trial_input_path value: {self.page1_ui.trial_input_path}")
-
             # Auto-load trial from Page 1 if available
             if hasattr(self.page1_ui, 'trial_input_path') and self.page1_ui.trial_input_path:
                 trial_path = self.page1_ui.trial_input_path
-
-                # Always reload to pick up any changes (e.g., frame trimming)
-                print(f"\n{'='*60}")
-                print(f"🔄 Auto-loading trial from Page 1: {trial_path}")
-                print(f"{'='*60}\n")
 
                 # Load the trial in Page 2 (this will reload even if already loaded)
                 self.load_trial_in_page2(trial_path)
@@ -184,7 +185,7 @@ class MainUI:
             # Check for color folder
             color_folder = trial_path / "color"
             if not color_folder.exists():
-                print(f"⚠️  No 'color' folder found in {trial_path}")
+                self.status_bar.config(text=f"Error: No 'color' folder found in {trial_path.name}")
                 return
 
             # Load trial
@@ -192,7 +193,7 @@ class MainUI:
             self.page2_ui.total_frames = len(self.page2_ui.color_images)
 
             if self.page2_ui.total_frames == 0:
-                print(f"⚠️  No frame images found in color folder")
+                self.status_bar.config(text="Error: No frame images found in color folder")
                 return
 
             # Detect camera intrinsics
@@ -222,7 +223,11 @@ class MainUI:
             self.page2_ui.frame_scale.config(to=self.page2_ui.total_frames)
             self.page2_ui.current_frame = 1
             self.page2_ui.frame_var.set(1)
-            self.page2_ui.results = {}
+
+            # Reset all subject-specific result dictionaries
+            self.page2_ui.human_results = {}
+            self.page2_ui.dog_results = {}
+            self.page2_ui.baby_results = {}
 
             # Load ground plane transform and targets
             self.page2_ui.load_ground_plane_and_targets()
@@ -235,13 +240,17 @@ class MainUI:
                 foreground="green"
             )
 
-            print(f"✅ Successfully loaded trial: {trial_path.name}")
-            print(f"   - {self.page2_ui.total_frames} frames")
-            print(f"   - Ground plane: {'✓' if self.page2_ui.ground_plane_transform is not None else '✗'}")
-            print(f"   - Targets: {'✓' if self.page2_ui.targets is not None else '✗'}")
+            # Update main status bar with success message
+            self.status_bar.config(
+                text=f"✓ Loaded {trial_path.name}: {self.page2_ui.total_frames} frames, "
+                f"Ground plane: {'Yes' if self.page2_ui.ground_plane_transform else 'No'}, "
+                f"Targets: {len(self.page2_ui.targets) if self.page2_ui.targets else 0}"
+            )
 
         except Exception as e:
-            print(f"❌ Error loading trial in Page 2: {e}")
+            error_msg = f"Error loading trial in Page 2: {str(e)}"
+            self.status_bar.config(text=error_msg)
+            self.page2_ui.status_label.config(text=error_msg, foreground="red")
             import traceback
             traceback.print_exc()
 

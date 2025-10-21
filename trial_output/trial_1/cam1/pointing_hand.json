@@ -1,9 +1,0 @@
-{
-  "trial": "trial_1",
-  "camera": "cam1",
-  "pointing_hand": "left",
-  "total_frames": 16,
-  "frame_distribution": {
-    "left": 16
-  }
-}

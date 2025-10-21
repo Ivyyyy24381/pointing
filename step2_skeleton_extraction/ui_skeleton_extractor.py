@@ -179,13 +179,23 @@ class SkeletonExtractorUI:
         ttk.Checkbutton(settings_frame, text="👤 Human", variable=self.detect_human_var,
                        command=self.on_subject_selection_change).grid(row=10, column=0, sticky="w")
 
-        self.detect_dog_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(settings_frame, text="🐶 Dog (lower half)", variable=self.detect_dog_var,
-                       command=self.on_subject_selection_change).grid(row=11, column=0, sticky="w")
+        # Subject detection buttons
+        ttk.Label(settings_frame, text="Subject Detection:").grid(row=11, column=0, sticky="w")
 
+        button_frame = ttk.Frame(settings_frame)
+        button_frame.grid(row=12, column=0, sticky="w", pady=5)
+
+        self.dog_button = ttk.Button(button_frame, text="🐶 Detect Dog",
+                                     command=self.run_batch_dog_detection)
+        self.dog_button.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.baby_button = ttk.Button(button_frame, text="👶 Detect Baby",
+                                      command=self.run_batch_baby_detection)
+        self.baby_button.pack(side=tk.LEFT)
+
+        # Keep track of detection state (for display purposes)
+        self.detect_dog_var = tk.BooleanVar(value=False)
         self.detect_baby_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(settings_frame, text="👶 Baby (lower half)", variable=self.detect_baby_var,
-                       command=self.on_subject_selection_change).grid(row=12, column=0, sticky="w")
 
         ttk.Separator(settings_frame, orient=tk.HORIZONTAL).grid(row=13, column=0, sticky="ew", pady=5)
 
@@ -315,9 +325,6 @@ class SkeletonExtractorUI:
             detect_dog = self.detect_dog_var.get()
             detect_baby = self.detect_baby_var.get()
 
-            print(f"\n🔧 Initializing detectors:")
-            print(f"   Human: {detect_human}, Dog: {detect_dog}, Baby: {detect_baby}")
-
             # Initialize human detector if enabled
             if detect_human:
                 self.detector = MediaPipeHumanDetector(
@@ -325,26 +332,32 @@ class SkeletonExtractorUI:
                     min_tracking_confidence=confidence,
                     model_complexity=complexity
                 )
-                print("✅ Human detector initialized")
             else:
                 self.detector = None
 
             # Initialize subject detectors if enabled
             if detect_dog:
                 from step3_subject_extraction import SubjectDetector
-                self.dog_detector = SubjectDetector(subject_type='dog')
-                print("✅ Dog detector initialized")
+                self.dog_detector = SubjectDetector(subject_type='dog', crop_ratio=0.6)
             else:
                 self.dog_detector = None
 
             if detect_baby:
                 from step3_subject_extraction import SubjectDetector
-                self.baby_detector = SubjectDetector(subject_type='baby')
-                print("✅ Baby detector initialized")
+                self.baby_detector = SubjectDetector(subject_type='baby', crop_ratio=0.6)
             else:
                 self.baby_detector = None
 
-            self.status_label.config(text="Detectors initialized", foreground="green")
+            # Build status message
+            enabled = []
+            if detect_human:
+                enabled.append("Human")
+            if detect_dog:
+                enabled.append("Dog")
+            if detect_baby:
+                enabled.append("Baby")
+            status_msg = f"Detectors ready: {', '.join(enabled)}" if enabled else "No detectors enabled"
+            self.status_label.config(text=status_msg, foreground="green")
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to initialize detector:\n{e}")
@@ -360,19 +373,21 @@ class SkeletonExtractorUI:
             self.process_current_frame()
 
     def on_subject_selection_change(self):
-        """Handle subject selection change - reinitialize detectors."""
-        print(f"\n🔄 Subject selection changed")
-        self.reinitialize_detector()
+        """Handle subject selection change."""
+        # Initialize detectors
+        self.initialize_detector()
+
+        # Update current frame display
+        if self.current_color is not None:
+            self.load_frame(self.current_frame)
 
     def on_arm_selection_change(self):
         """Handle manual arm selection change - applies to ALL loaded results."""
         selected_arm = self.arm_selection_var.get()
-        print(f"\n🔄 Arm selection changed to: {selected_arm}")
 
         if selected_arm != "auto":
             # Update ALL loaded human results with the selected arm
             if self.human_results:
-                print(f"   Updating {len(self.human_results)} loaded frames with {selected_arm} arm...")
                 for frame_key, result in self.human_results.items():
                     if result.landmarks_3d:
                         result.metadata['pointing_arm'] = selected_arm
@@ -380,7 +395,6 @@ class SkeletonExtractorUI:
                             result.landmarks_3d,
                             selected_arm
                         )
-                print(f"   ✓ All {len(self.human_results)} results updated")
 
             # Update current human result if available
             if self.current_human_result and self.current_human_result.landmarks_3d:
@@ -389,20 +403,16 @@ class SkeletonExtractorUI:
                     self.current_human_result.landmarks_3d,
                     selected_arm
                 )
-                print(f"   ✓ Current frame updated")
 
             # Update display
             self.update_display()
             self.update_info()
-            print(f"   ✓ Display updated\n")
+            self.status_label.config(text=f"Updated to {selected_arm} arm", foreground="blue")
 
         else:
             # Auto mode - reprocess current frame
-            print(f"   Auto mode - reprocessing current frame...")
             if self.current_color is not None:
                 self.process_current_frame()
-            else:
-                print(f"   ⚠️  No current frame to reprocess")
 
     def on_subject_type_change(self):
         """Handle subject type selection changes (checkboxes)."""
@@ -419,9 +429,6 @@ class SkeletonExtractorUI:
         if detect_baby:
             enabled_types.append("Baby")
 
-        print(f"\n🔄 Subject detection updated:")
-        print(f"   Enabled: {', '.join(enabled_types) if enabled_types else 'None'}")
-
         # Show info for newly enabled types (only show once per session)
         if detect_dog and not hasattr(self, '_dog_info_shown'):
             messagebox.showinfo("Dog Detection",
@@ -430,7 +437,6 @@ class SkeletonExtractorUI:
                               "Frame-by-frame processing is not available.\n\n"
                               "For now, please use Human or Baby detection.")
             self._dog_info_shown = True
-            print(f"   ⚠️  Dog detection enabled (not yet fully implemented)")
 
         if detect_baby and not hasattr(self, '_baby_info_shown'):
             messagebox.showinfo("Baby Detection",
@@ -439,7 +445,6 @@ class SkeletonExtractorUI:
                               "to avoid detecting adults.\n\n"
                               "Processes frames automatically.")
             self._baby_info_shown = True
-            print(f"   ✓ Baby detection enabled (MediaPipe, lower-half only)")
 
         # Reinitialize detector with new subject type
         self.reinitialize_detector()
@@ -451,11 +456,8 @@ class SkeletonExtractorUI:
         import json
         import glob
 
-        print(f"\n🔍 Looking for source path in: {trial_path}")
-
         # Try to find any metadata*.json file
         metadata_files = list(trial_path.glob("metadata*.json"))
-        print(f"   Found {len(metadata_files)} metadata files: {metadata_files}")
 
         if metadata_files:
             metadata_file = metadata_files[0]  # Use the first one found
@@ -466,17 +468,14 @@ class SkeletonExtractorUI:
                 original_path_str = metadata.get("trial_path")
                 if original_path_str:
                     self.original_trial_path = Path(original_path_str).resolve()
-                    print(f"✅ Found original source path from metadata: {self.original_trial_path}")
 
                     # Check if original path still exists
                     if not self.original_trial_path.exists():
-                        print(f"⚠️ Warning: Original path no longer exists!")
-                        print(f"   Results will save to trial_output/ only")
                         self.original_trial_path = None
                     return
 
-            except Exception as e:
-                print(f"⚠️ Failed to load metadata: {e}")
+            except Exception:
+                pass
 
         # Fallback to source_path.txt (if saved)
         source_path_file = trial_path / "source_path.txt"
@@ -486,21 +485,16 @@ class SkeletonExtractorUI:
                     original_path_str = f.read().strip()
 
                 self.original_trial_path = Path(original_path_str).resolve()
-                print(f"✅ Found original source path from txt: {self.original_trial_path}")
 
                 # Check if original path still exists
                 if not self.original_trial_path.exists():
-                    print(f"⚠️ Warning: Original path no longer exists!")
-                    print(f"   Results will save to trial_output/ only")
                     self.original_trial_path = None
                 return
 
-            except Exception as e:
-                print(f"⚠️ Failed to load source path: {e}")
+            except Exception:
+                pass
 
         # No source info found
-        print(f"⚠️ No source path info found in {trial_path}")
-        print(f"   Results will save to trial_output/ only (not synced to original path)")
         self.original_trial_path = None
 
     def load_trial_path(self, trial_path):
@@ -522,10 +516,6 @@ class SkeletonExtractorUI:
 
         # Load trial
         self.trial_path = trial_path
-        print(f"\n📂 Loaded trial from: {self.trial_path}")
-        print(f"   Absolute path: {self.trial_path.absolute()}")
-        if self.original_trial_path:
-            print(f"   Original user path: {self.original_trial_path}")
         self.color_images = sorted(color_folder.glob("frame_*.png"))
         self.total_frames = len(self.color_images)
 
@@ -591,7 +581,6 @@ class SkeletonExtractorUI:
         self.ground_plane_transform = None
         for path in possible_transform_paths:
             if path.exists():
-                print(f"✅ Loaded ground plane transform: {path}")
                 with open(path) as f:
                     transform_data = json.load(f)
                     self.ground_plane_transform = np.array(transform_data['rotation_matrix'])
@@ -608,20 +597,501 @@ class SkeletonExtractorUI:
         ]
 
         self.targets = None
-        print(f"🔍 Searching for targets in {len(possible_target_paths)} locations...")
-        for i, path in enumerate(possible_target_paths, 1):
-            print(f"   {i}. Checking: {path}")
+        for path in possible_target_paths:
             if path.exists():
-                print(f"      ✅ Found!")
                 with open(path) as f:
                     self.targets = json.load(f)
-                print(f"✅ Loaded {len(self.targets)} targets from: {path}")
                 break
-            else:
-                print(f"      ✗ Not found")
 
-        if self.targets is None:
-            print("⚠️  No target detections found. Run Page 1 to detect targets first.")
+    def run_batch_dog_detection(self):
+        """Run batch dog detection ONCE for the entire trial using DeepLabCut."""
+        if not self.color_images or not self.trial_path:
+            messagebox.showwarning("Warning", "Please load a trial first")
+            return
+
+        # Check if already detected
+        if len(self.dog_results) > 0:
+            response = messagebox.askyesno(
+                "Dog Detection",
+                f"Dog detection results already exist ({len(self.dog_results)} frames).\n\n"
+                "Run again and overwrite existing results?"
+            )
+            if not response:
+                return
+
+        response = messagebox.askyesno(
+            "Dog Detection",
+            f"Run dog detection on all {self.total_frames} frames?\n\n"
+            "This will use DeepLabCut and may take several minutes."
+        )
+
+        if not response:
+            return
+
+        # Initialize dog detector
+        try:
+            from step3_subject_extraction import SubjectDetector
+            self.dog_detector = SubjectDetector(subject_type='dog', crop_ratio=0.6)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to initialize dog detector:\n{e}")
+            return
+
+        self.status_label.config(text="Running batch dog detection...", foreground="orange")
+        self.root.update()
+
+        try:
+            # Load all frames and metadata
+            all_frames = []
+            all_frame_numbers = []
+            all_depth_images = []
+
+            for color_path in self.color_images:
+                frame_num = int(color_path.stem.split('_')[-1])
+                color_img = cv2.imread(str(color_path))
+                if color_img is None:
+                    continue
+
+                color_rgb = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
+
+                # Load depth
+                depth_img = None
+                depth_folder = self.trial_path / "depth"
+                if depth_folder.exists():
+                    try:
+                        depth_npy = depth_folder / f"frame_{frame_num:06d}.npy"
+                        depth_raw = depth_folder / f"frame_{frame_num:06d}.raw"
+                        if depth_npy.exists():
+                            depth_img = np.load(str(depth_npy))
+                        elif depth_raw.exists():
+                            h, w = color_rgb.shape[:2]
+                            depth_data = np.fromfile(str(depth_raw), dtype=np.uint16)
+                            depth_img = depth_data.reshape((h, w)).astype(np.float32) / 1000.0
+                    except:
+                        pass
+
+                all_frames.append(color_rgb)
+                all_frame_numbers.append(frame_num)
+                all_depth_images.append(depth_img)
+
+            # Determine output path
+            camera_name = self.trial_path.name
+            trial_name = self.trial_path.parent.name
+            if camera_name == trial_name:
+                output_path = Path("trial_output") / camera_name
+            else:
+                output_path = Path("trial_output") / trial_name / camera_name
+
+            output_path.mkdir(parents=True, exist_ok=True)
+            temp_video_path = output_path / "dog_detection_cropped_video.mp4"
+
+            # Run batch dog detection
+            dog_results_dict = self.dog_detector.process_batch_video(
+                str(temp_video_path),
+                all_frames,
+                all_frame_numbers,
+                depth_images=all_depth_images,
+                fx=self.fx, fy=self.fy,
+                cx=self.cx, cy=self.cy
+            )
+
+            # Save results to JSON
+            self.dog_results = dog_results_dict
+            dog_json_path = output_path / "dog_detection_results.json"
+            self.save_subject_results(dog_json_path, dog_results_dict)
+
+            # Export to CSV
+            try:
+                from step3_subject_extraction.dog_csv_exporter import DogCSVExporter
+                csv_path = output_path / "processed_dog_result_table.csv"
+
+                # Get paths to related data
+                skeleton_path = output_path / "skeleton_2d.json" if (output_path / "skeleton_2d.json").exists() else None
+                targets_path = output_path / "target_detections_cam_frame.json" if (output_path / "target_detections_cam_frame.json").exists() else None
+
+                exporter = DogCSVExporter(fps=30.0)
+                exporter.export_to_csv(
+                    dog_results_path=dog_json_path,
+                    human_results_path=skeleton_path,
+                    targets_path=targets_path,
+                    output_csv_path=csv_path,
+                    start_frame_index=0
+                )
+
+                # Generate 2D trace visualization
+                try:
+                    from step3_subject_extraction.dog_trace_visualizer import DogTraceVisualizer
+                    trace_path = output_path / "dog_result_trace2d.png"
+
+                    visualizer = DogTraceVisualizer()
+                    visualizer.create_trace_plot(
+                        dog_results_path=dog_json_path,
+                        targets_path=targets_path,
+                        output_image_path=trace_path,
+                        title="2D Trace (Top View) - Dog"
+                    )
+
+                    # Generate distance plot
+                    try:
+                        from step3_subject_extraction.dog_distance_plotter import DogDistancePlotter
+                        distance_plot_path = output_path / "dog_distance_to_targets.png"
+
+                        plotter = DogDistancePlotter()
+                        plotter.create_distance_plot(
+                            csv_path=csv_path,
+                            output_image_path=distance_plot_path,
+                            title="Dog Distance to Targets Over Time"
+                        )
+
+                        self.status_label.config(
+                            text=f"Dog detection complete: {len(dog_results_dict)}/{self.total_frames} frames (CSV + visualizations exported)",
+                            foreground="green"
+                        )
+                    except Exception as distance_error:
+                        print(f"⚠️ Distance plot failed: {distance_error}")
+                        self.status_label.config(
+                            text=f"Dog detection complete: {len(dog_results_dict)}/{self.total_frames} frames (CSV + trace exported)",
+                            foreground="green"
+                        )
+                except Exception as trace_error:
+                    print(f"⚠️ Trace visualization failed: {trace_error}")
+                    self.status_label.config(
+                        text=f"Dog detection complete: {len(dog_results_dict)}/{self.total_frames} frames (CSV exported)",
+                        foreground="green"
+                    )
+
+            except Exception as csv_error:
+                print(f"⚠️ CSV export failed: {csv_error}")
+                import traceback
+                traceback.print_exc()
+                self.status_label.config(
+                    text=f"Dog detection complete: {len(dog_results_dict)}/{self.total_frames} frames (CSV export failed)",
+                    foreground="orange"
+                )
+
+            # Mark dog detection as completed
+            self.detect_dog_var.set(True)
+
+            # Update current frame display
+            if self.current_color is not None:
+                color_path = self.color_images[self.current_frame - 1]
+                frame_num = int(color_path.stem.split('_')[1])
+                frame_key = f"frame_{frame_num:06d}"
+                self.current_dog_result = self.dog_results.get(frame_key)
+                self.update_display()
+                self.update_info()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Dog detection failed:\n{e}")
+            self.status_label.config(text="Dog detection error", foreground="red")
+            import traceback
+            traceback.print_exc()
+
+    def run_batch_baby_detection(self):
+        """Run batch baby detection for the entire trial using MediaPipe."""
+        if not self.color_images or not self.trial_path:
+            messagebox.showwarning("Warning", "Please load a trial first")
+            return
+
+        # Check if already detected
+        if len(self.baby_results) > 0:
+            response = messagebox.askyesno(
+                "Baby Detection",
+                f"Baby detection results already exist ({len(self.baby_results)} frames).\n\n"
+                "Run again and overwrite existing results?"
+            )
+            if not response:
+                return
+
+        response = messagebox.askyesno(
+            "Baby Detection",
+            f"Run baby detection on all {self.total_frames} frames?\n\n"
+            "This may take several minutes."
+        )
+
+        if not response:
+            return
+
+        # Initialize baby detector
+        try:
+            from step3_subject_extraction import SubjectDetector
+            self.baby_detector = SubjectDetector(subject_type='baby', crop_ratio=0.6)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to initialize baby detector:\n{e}")
+            return
+
+        self.status_label.config(text="Running batch baby detection...", foreground="orange")
+        self.progress_var.set(0)
+        self.root.update()
+
+        try:
+            self.baby_results = {}
+
+            for i, color_path in enumerate(self.color_images, 1):
+                frame_num = int(color_path.stem.split('_')[-1])
+                color_img = cv2.imread(str(color_path))
+                if color_img is None:
+                    continue
+
+                color_rgb = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
+
+                # Load depth
+                depth_img = None
+                depth_folder = self.trial_path / "depth"
+                if depth_folder.exists():
+                    try:
+                        depth_npy = depth_folder / f"frame_{frame_num:06d}.npy"
+                        depth_raw = depth_folder / f"frame_{frame_num:06d}.raw"
+                        if depth_npy.exists():
+                            depth_img = np.load(str(depth_npy))
+                        elif depth_raw.exists():
+                            h, w = color_rgb.shape[:2]
+                            depth_data = np.fromfile(str(depth_raw), dtype=np.uint16)
+                            depth_img = depth_data.reshape((h, w)).astype(np.float32) / 1000.0
+                    except:
+                        pass
+
+                # Detect baby
+                baby_result = self.baby_detector.detect_frame(
+                    color_rgb, frame_num,
+                    depth_image=depth_img,
+                    fx=self.fx, fy=self.fy,
+                    cx=self.cx, cy=self.cy
+                )
+
+                if baby_result:
+                    frame_key = f"frame_{frame_num:06d}"
+                    self.baby_results[frame_key] = baby_result
+
+                # Update progress
+                progress = (i / self.total_frames) * 100
+                self.progress_var.set(progress)
+                self.status_label.config(
+                    text=f"Baby detection: {i}/{self.total_frames}...",
+                    foreground="orange"
+                )
+                self.root.update()
+
+            # Save results to JSON
+            camera_name = self.trial_path.name
+            trial_name = self.trial_path.parent.name
+            if camera_name == trial_name:
+                output_path = Path("trial_output") / camera_name
+            else:
+                output_path = Path("trial_output") / trial_name / camera_name
+
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            # Save baby results in MediaPipe format for compatibility with existing tools
+            baby_json_path = output_path / "skeleton_2d.json"
+            self.save_baby_mediapipe_format(baby_json_path, self.baby_results)
+
+            # Export to CSV and generate visualizations
+            try:
+                from step3_subject_extraction.baby_csv_exporter import BabyCSVExporter
+                csv_path = output_path / "processed_baby_result_table.csv"
+
+                # Get paths to related data
+                targets_path = output_path / "target_detections_cam_frame.json" if (output_path / "target_detections_cam_frame.json").exists() else None
+
+                exporter = BabyCSVExporter(fps=30.0)
+                exporter.export_to_csv(
+                    baby_results_path=baby_json_path,
+                    targets_path=targets_path,
+                    output_csv_path=csv_path,
+                    start_frame_index=0
+                )
+
+                # Generate 2D trace visualization
+                try:
+                    from step3_subject_extraction.baby_trace_visualizer import BabyTraceVisualizer
+                    trace_path = output_path / "baby_result_trace2d.png"
+
+                    visualizer = BabyTraceVisualizer()
+                    visualizer.create_trace_plot(
+                        baby_results_path=baby_json_path,
+                        targets_path=targets_path,
+                        output_image_path=trace_path,
+                        title="2D Trace (Top View) - Baby"
+                    )
+
+                    # Generate distance plot
+                    try:
+                        from step3_subject_extraction.baby_distance_plotter import BabyDistancePlotter
+                        distance_plot_path = output_path / "baby_distance_to_targets.png"
+
+                        plotter = BabyDistancePlotter()
+                        plotter.create_distance_plot(
+                            csv_path=csv_path,
+                            output_image_path=distance_plot_path,
+                            title="Baby Distance to Targets Over Time"
+                        )
+
+                        self.status_label.config(
+                            text=f"Baby detection complete: {len(self.baby_results)}/{self.total_frames} frames (CSV + visualizations exported)",
+                            foreground="green"
+                        )
+                    except Exception as distance_error:
+                        print(f"⚠️ Distance plot failed: {distance_error}")
+                        self.status_label.config(
+                            text=f"Baby detection complete: {len(self.baby_results)}/{self.total_frames} frames (CSV + trace exported)",
+                            foreground="green"
+                        )
+                except Exception as trace_error:
+                    print(f"⚠️ Trace visualization failed: {trace_error}")
+                    self.status_label.config(
+                        text=f"Baby detection complete: {len(self.baby_results)}/{self.total_frames} frames (CSV exported)",
+                        foreground="green"
+                    )
+
+            except Exception as csv_error:
+                print(f"⚠️ CSV export failed: {csv_error}")
+                import traceback
+                traceback.print_exc()
+                self.status_label.config(
+                    text=f"Baby detection complete: {len(self.baby_results)}/{self.total_frames} frames (CSV export failed)",
+                    foreground="orange"
+                )
+
+            self.progress_var.set(100)
+
+            # Mark baby detection as completed
+            self.detect_baby_var.set(True)
+
+            # Update current frame display
+            if self.current_color is not None:
+                color_path = self.color_images[self.current_frame - 1]
+                frame_num = int(color_path.stem.split('_')[1])
+                frame_key = f"frame_{frame_num:06d}"
+                self.current_baby_result = self.baby_results.get(frame_key)
+                self.update_display()
+                self.update_info()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Baby detection failed:\n{e}")
+            self.status_label.config(text="Baby detection error", foreground="red")
+            import traceback
+            traceback.print_exc()
+
+    def save_baby_mediapipe_format(self, json_path: Path, results_dict: dict):
+        """Save baby results in MediaPipe format (compatible with visualizations and old workflow)."""
+        json_data = {}
+        for frame_key, result in results_dict.items():
+            # Convert to MediaPipe format
+            if hasattr(result, 'to_dict'):
+                result_dict = result.to_dict()
+            else:
+                result_dict = {
+                    'keypoints_2d': result.keypoints_2d,
+                    'keypoints_3d': result.keypoints_3d if hasattr(result, 'keypoints_3d') else None
+                }
+
+            # Build MediaPipe-compatible format
+            mediapipe_data = {
+                'frame': int(frame_key.split('_')[1]),
+                'landmarks_2d': result_dict.get('keypoints_2d', []),
+                'landmarks_3d': result_dict.get('keypoints_3d', []),
+                'keypoint_names': [
+                    'nose', 'left_eye_inner', 'left_eye', 'left_eye_outer',
+                    'right_eye_inner', 'right_eye', 'right_eye_outer',
+                    'left_ear', 'right_ear', 'mouth_left', 'mouth_right',
+                    'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+                    'left_wrist', 'right_wrist', 'left_pinky', 'right_pinky',
+                    'left_index', 'right_index', 'left_thumb', 'right_thumb',
+                    'left_hip', 'right_hip', 'left_knee', 'right_knee',
+                    'left_ankle', 'right_ankle', 'left_heel', 'right_heel',
+                    'left_foot_index', 'right_foot_index'
+                ],
+                'metadata': result_dict.get('metadata', {}),
+                'arm_vectors': result_dict.get('arm_vectors', {})
+            }
+
+            json_data[frame_key] = mediapipe_data
+
+        with open(json_path, 'w') as f:
+            json.dump(json_data, f, indent=2)
+
+        print(f"✅ Saved {len(results_dict)} baby detections to {json_path} (MediaPipe format)")
+
+    def save_subject_results(self, json_path: Path, results_dict: dict):
+        """Save subject detection results to JSON file."""
+        # Convert SubjectDetectionResult objects to dict
+        json_data = {}
+        for frame_key, result in results_dict.items():
+            # Use to_dict() method if available, otherwise build dict manually
+            if hasattr(result, 'to_dict'):
+                json_data[frame_key] = result.to_dict()
+            else:
+                json_data[frame_key] = {
+                    'subject_type': result.subject_type,
+                    'detection_region': result.detection_region,
+                    'bbox': list(result.bbox) if result.bbox else None,
+                    'keypoints_2d': result.keypoints_2d,
+                    'keypoints_3d': result.keypoints_3d if result.keypoints_3d else None
+                }
+
+        with open(json_path, 'w') as f:
+            json.dump(json_data, f, indent=2)
+
+        print(f"✅ Saved {len(results_dict)} detections to {json_path}")
+
+    def load_subject_results_for_frame(self, frame_key: str):
+        """Load dog/baby detection results for a specific frame from saved JSON files."""
+        if not self.trial_path:
+            return
+
+        # Determine output path
+        camera_name = self.trial_path.name
+        trial_name = self.trial_path.parent.name
+        if camera_name == trial_name:
+            output_path = Path("trial_output") / camera_name
+        else:
+            output_path = Path("trial_output") / trial_name / camera_name
+
+        # Load dog results if enabled and not already loaded
+        if self.detect_dog_var.get() and len(self.dog_results) == 0:
+            dog_json_path = output_path / "dog_detection_results.json"
+            if dog_json_path.exists():
+                try:
+                    with open(dog_json_path) as f:
+                        dog_data = json.load(f)
+                    # Convert to SubjectDetectionResult objects
+                    from step3_subject_extraction.subject_detector import SubjectDetectionResult
+                    for key, data in dog_data.items():
+                        self.dog_results[key] = SubjectDetectionResult(
+                            subject_type=data['subject_type'],
+                            detection_region=data.get('detection_region', 'lower_half'),
+                            bbox=tuple(data['bbox']) if data.get('bbox') else None,
+                            keypoints_2d=data.get('keypoints_2d'),
+                            keypoints_3d=data.get('keypoints_3d')
+                        )
+                    print(f"✅ Loaded {len(self.dog_results)} dog detections from {dog_json_path}")
+                except Exception as e:
+                    print(f"⚠️ Failed to load dog results: {e}")
+
+        # Load baby results if enabled and not already loaded
+        if self.detect_baby_var.get() and len(self.baby_results) == 0:
+            baby_json_path = output_path / "baby_detection_results.json"
+            if baby_json_path.exists():
+                try:
+                    with open(baby_json_path) as f:
+                        baby_data = json.load(f)
+                    # Convert to SubjectDetectionResult objects
+                    from step3_subject_extraction.subject_detector import SubjectDetectionResult
+                    for key, data in baby_data.items():
+                        self.baby_results[key] = SubjectDetectionResult(
+                            subject_type=data['subject_type'],
+                            detection_region=data.get('detection_region', 'lower_half'),
+                            bbox=tuple(data['bbox']) if data.get('bbox') else None,
+                            keypoints_2d=data.get('keypoints_2d'),
+                            keypoints_3d=data.get('keypoints_3d')
+                        )
+                    print(f"✅ Loaded {len(self.baby_results)} baby detections from {baby_json_path}")
+                except Exception as e:
+                    print(f"⚠️ Failed to load baby results: {e}")
+
+        # Update current results for this frame
+        self.current_dog_result = self.dog_results.get(frame_key)
+        self.current_baby_result = self.baby_results.get(frame_key)
 
     def load_frame(self, frame_num: int):
         """Load specific frame."""
@@ -649,55 +1119,41 @@ class SkeletonExtractorUI:
 
                 if depth_npy.exists():
                     self.current_depth = np.load(str(depth_npy))
-                    print(f"✅ Loaded depth from: {depth_npy.name}, shape: {self.current_depth.shape}")
                 elif depth_raw.exists():
                     # Load using flexible loader
                     depth_data = np.fromfile(str(depth_raw), dtype=np.uint16)
                     # Detect shape
                     h, w = self.current_color.shape[:2]
                     self.current_depth = depth_data.reshape((h, w)).astype(np.float32) / 1000.0
-                    print(f"✅ Loaded depth from: {depth_raw.name}, shape: {self.current_depth.shape}")
                 else:
-                    print(f"⚠️  No depth file found: {depth_npy.name} or {depth_raw.name}")
                     self.current_depth = None
             except Exception as e:
-                print(f"❌ Could not load depth: {e}")
-                import traceback
-                traceback.print_exc()
                 self.current_depth = None
         else:
-            print(f"⚠️  Depth folder not found: {depth_folder}")
             self.current_depth = None
 
         # Check if already processed
         # Use actual frame number from filename to match what process_all_frames uses
         frame_key = f"frame_{actual_frame_num:06d}"
 
-        # Load results for each subject type
+        # Load results for human (always check in-memory dict)
         if frame_key in self.human_results:
             self.current_human_result = self.human_results[frame_key]
         else:
             self.current_human_result = None
 
-        if frame_key in self.dog_results:
-            self.current_dog_result = self.dog_results[frame_key]
-        else:
-            self.current_dog_result = None
-
-        if frame_key in self.baby_results:
-            self.current_baby_result = self.baby_results[frame_key]
-        else:
-            self.current_baby_result = None
+        # Load dog/baby results from saved JSON if needed
+        self.load_subject_results_for_frame(frame_key)
 
         self.update_display()
         self.update_info()
 
     def process_current_frame(self):
-        """Process current frame - detects all enabled subject types."""
+        """Process current frame - detects ONLY human skeleton (MediaPipe)."""
         if self.current_color is None:
             return
 
-        self.status_label.config(text="Processing...", foreground="orange")
+        self.status_label.config(text="Processing human skeleton...", foreground="orange")
         self.root.update()
 
         try:
@@ -706,7 +1162,7 @@ class SkeletonExtractorUI:
             actual_frame_num = int(color_path.stem.split('_')[1])
             frame_key = f"frame_{actual_frame_num:06d}"
 
-            # Detect human if enabled
+            # ONLY detect human - dog/baby are loaded from saved results
             if self.detector is not None:
                 human_result = self.detector.detect_frame(
                     self.current_color,
@@ -718,49 +1174,16 @@ class SkeletonExtractorUI:
                 if human_result:
                     self.human_results[frame_key] = human_result
                     self.current_human_result = human_result
+                    self.status_label.config(text="Human detected", foreground="green")
+                else:
+                    self.current_human_result = None
+                    self.status_label.config(text="No human detected", foreground="orange")
             else:
                 self.current_human_result = None
+                self.status_label.config(text="Human detector disabled", foreground="gray")
 
-            # Detect dog if enabled
-            if self.dog_detector is not None:
-                dog_result = self.dog_detector.detect_frame(
-                    self.current_color,
-                    actual_frame_num,
-                    depth_image=self.current_depth,
-                    fx=self.fx, fy=self.fy,
-                    cx=self.cx, cy=self.cy
-                )
-                if dog_result:
-                    self.dog_results[frame_key] = dog_result
-                    self.current_dog_result = dog_result
-            else:
-                self.current_dog_result = None
-
-            # Detect baby if enabled
-            if self.baby_detector is not None:
-                baby_result = self.baby_detector.detect_frame(
-                    self.current_color,
-                    actual_frame_num,
-                    depth_image=self.current_depth,
-                    fx=self.fx, fy=self.fy,
-                    cx=self.cx, cy=self.cy
-                )
-                if baby_result:
-                    self.baby_results[frame_key] = baby_result
-                    self.current_baby_result = baby_result
-            else:
-                self.current_baby_result = None
-
-            # Update status
-            detected = []
-            if self.current_human_result: detected.append("human")
-            if self.current_dog_result: detected.append("dog")
-            if self.current_baby_result: detected.append("baby")
-
-            if detected:
-                self.status_label.config(text=f"Detected: {', '.join(detected)}", foreground="green")
-            else:
-                self.status_label.config(text="No subjects detected", foreground="orange")
+            # Load dog/baby results from saved data if they exist
+            self.load_subject_results_for_frame(frame_key)
 
             self.update_display()
             self.update_info()
@@ -785,13 +1208,14 @@ class SkeletonExtractorUI:
         if not response:
             return
 
-        # Clear previous results
+        # Clear previous human results ONLY (preserve dog/baby if already saved)
         self.human_results = {}
-        self.dog_results = {}
-        self.baby_results = {}
         self.progress_var.set(0)
 
         skipped_frames = 0
+
+        # Process ONLY human skeleton (MediaPipe)
+        self.status_label.config(text="Processing human skeletons...", foreground="blue")
 
         for i, color_path in enumerate(self.color_images, 1):
             # Load frame
@@ -800,7 +1224,6 @@ class SkeletonExtractorUI:
 
             # Skip if frame couldn't be loaded
             if color_img is None:
-                print(f"⚠️ Skipping frame {frame_num}: Could not read {color_path}")
                 skipped_frames += 1
                 continue
 
@@ -825,7 +1248,7 @@ class SkeletonExtractorUI:
 
             frame_key = f"frame_{frame_num:06d}"
 
-            # Detect human if enabled
+            # Detect ONLY human (frame-by-frame with MediaPipe)
             if self.detector is not None:
                 human_result = self.detector.detect_frame(
                     color_rgb, frame_num,
@@ -836,46 +1259,28 @@ class SkeletonExtractorUI:
                 if human_result:
                     self.human_results[frame_key] = human_result
 
-            # Detect dog if enabled
-            if self.dog_detector is not None:
-                dog_result = self.dog_detector.detect_frame(
-                    color_rgb, frame_num,
-                    depth_image=depth_img,
-                    fx=self.fx, fy=self.fy,
-                    cx=self.cx, cy=self.cy
-                )
-                if dog_result:
-                    self.dog_results[frame_key] = dog_result
-
-            # Detect baby if enabled
-            if self.baby_detector is not None:
-                baby_result = self.baby_detector.detect_frame(
-                    color_rgb, frame_num,
-                    depth_image=depth_img,
-                    fx=self.fx, fy=self.fy,
-                    cx=self.cx, cy=self.cy
-                )
-                if baby_result:
-                    self.baby_results[frame_key] = baby_result
-
             # Update visualization if this is the current frame being viewed
             if i == self.current_frame:
                 self.current_human_result = self.human_results.get(frame_key)
-                self.current_dog_result = self.dog_results.get(frame_key)
-                self.current_baby_result = self.baby_results.get(frame_key)
                 self.current_color = color_rgb
                 self.current_depth = depth_img
-                self.update_display()
-                self.update_info()
 
             # Update progress
             progress = (i / self.total_frames) * 100
             self.progress_var.set(progress)
             self.status_label.config(
-                text=f"Processing {i}/{self.total_frames}...",
+                text=f"Processing {i}/{self.total_frames} (Human)...",
                 foreground="orange"
             )
             self.root.update()
+
+        # Complete progress
+        self.progress_var.set(100)
+        self.status_label.config(
+            text=f"Processing complete",
+            foreground="green"
+        )
+        self.root.update()
 
         # Post-process: determine pointing arm for human results only
         selected_arm = self.arm_selection_var.get()
@@ -885,14 +1290,8 @@ class SkeletonExtractorUI:
             if selected_arm == "auto":
                 results_list = list(self.human_results.values())
                 pointing_hand = determine_pointing_hand_whole_trial(results_list)
-                print(f"\n{'='*60}")
-                print(f"👆 AUTO-DETECTED POINTING HAND: {pointing_hand.upper()}")
-                print(f"{'='*60}\n")
             else:
                 pointing_hand = selected_arm
-                print(f"\n{'='*60}")
-                print(f"👆 USER-SELECTED POINTING HAND: {pointing_hand.upper()}")
-                print(f"{'='*60}\n")
 
             # Update all human results with the determined pointing hand
             for result in self.human_results.values():
@@ -942,9 +1341,8 @@ class SkeletonExtractorUI:
             else:
                 output_path = Path("trial_output") / trial_name / camera_name
 
-            print(f"\n💾 Saving results to trial_output: {output_path}")
-            print(f"   Trial: {trial_name}")
-            print(f"   Camera: {camera_name}")
+            self.status_label.config(text="Phase 3/3: Saving results...", foreground="blue")
+            self.root.update()
 
             output_path.mkdir(parents=True, exist_ok=True)
             csv_path = output_path / "processed_gesture.csv"
@@ -955,8 +1353,6 @@ class SkeletonExtractorUI:
                 csv_path,
                 global_start_frame=0
             )
-
-            print(f"\n✅ Pointing analysis complete: {len(analyses)} frames analyzed")
 
             # Generate 2D pointing trace plot
             from step2_skeleton_extraction.plot_pointing_trace import plot_2d_pointing_trace
@@ -993,6 +1389,31 @@ class SkeletonExtractorUI:
 
         # Copy all results from trial_output back to original input path
         self.sync_results_to_input()
+
+        # Show completion message
+        if self.original_trial_path:
+            messagebox.showinfo(
+                "Processing Complete",
+                f"✅ Processing complete!\n\n"
+                f"All results saved to:\n"
+                f"{self.original_trial_path}\n\n"
+                f"Generated files:\n"
+                f"• Skeleton data (skeleton_2d.json)\n"
+                f"• Pointing analysis (processed_gesture.csv)\n"
+                f"• 2D trace (2d_pointing_trace.png)\n"
+                f"• 3D visualizations (fig/ folder)\n"
+                f"• Target/ground plane data\n"
+                f"• Subject detection results\n\n"
+                f"trial_output/ folder has been cleaned up."
+            )
+        else:
+            messagebox.showinfo(
+                "Processing Complete",
+                f"✅ Processing complete!\n\n"
+                f"Results saved to:\n"
+                f"• trial_output/{trial_name}/{camera_name}/\n\n"
+                f"Note: Original path not found, results kept in trial_output/"
+            )
 
         # Update display with already-processed results (don't reload/reprocess)
         self.update_display()
@@ -1079,7 +1500,6 @@ class SkeletonExtractorUI:
             json_file = output_path / "skeleton_2d.json"
             with open(json_file, 'w') as f:
                 json.dump(output_data, f, indent=2)
-            print(f"✅ Saved human results: {json_file}")
 
         # Save dog results (new: dog_detection_results.json)
         if self.dog_results:
@@ -1090,7 +1510,15 @@ class SkeletonExtractorUI:
             json_file = output_path / "dog_detection_results.json"
             with open(json_file, 'w') as f:
                 json.dump(output_data, f, indent=2)
-            print(f"✅ Saved dog results: {json_file}")
+
+            # Generate plots for dog
+            try:
+                from step2_skeleton_extraction.subject_plot_generator import generate_subject_plots
+                generate_subject_plots(self.trial_path, subject_type='dog', subject_name='Dog',
+                                     fps=30.0, output_path_override=output_path)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
 
         # Save baby results (new: baby_detection_results.json)
         if self.baby_results:
@@ -1101,7 +1529,15 @@ class SkeletonExtractorUI:
             json_file = output_path / "baby_detection_results.json"
             with open(json_file, 'w') as f:
                 json.dump(output_data, f, indent=2)
-            print(f"✅ Saved baby results: {json_file}")
+
+            # Generate plots for baby
+            try:
+                from step2_skeleton_extraction.subject_plot_generator import generate_subject_plots
+                generate_subject_plots(self.trial_path, subject_type='baby', subject_name='Baby',
+                                     fps=30.0, output_path_override=output_path)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
 
         # Save summary
         if self.human_results or self.dog_results or self.baby_results:
@@ -1135,8 +1571,6 @@ class SkeletonExtractorUI:
                         pct = (count / len(self.human_results)) * 100
                         f.write(f"  {arm}: {count} frames ({pct:.1f}%)\n")
 
-            print(f"✅ Saved summary: {summary_file}")
-
             # Save pointing hand to separate JSON if human results exist
             if pointing_hand and self.human_results:
                 pointing_hand_file = output_path / "pointing_hand.json"
@@ -1148,9 +1582,6 @@ class SkeletonExtractorUI:
                         "total_frames": len(self.human_results),
                         "frame_distribution": pointing_arms
                     }, f, indent=2)
-                print(f"✅ Saved pointing hand: {pointing_hand_file}")
-
-        print(f"\n✅ Auto-saved results to: {output_path}")
 
     def save_3d_visualizations(self):
         """Save 3D skeleton visualizations for all frames to /fig folder."""
@@ -1169,8 +1600,6 @@ class SkeletonExtractorUI:
         # Create fig directory in trial_output
         fig_dir = output_path / "fig"
         fig_dir.mkdir(parents=True, exist_ok=True)
-
-        print(f"\n📊 Saving 3D visualizations to {fig_dir}...")
 
         from step2_skeleton_extraction.visualize_skeleton_3d import plot_skeleton_3d
         from step2_skeleton_extraction.pointing_analysis import compute_head_orientation
@@ -1217,21 +1646,13 @@ class SkeletonExtractorUI:
                     plt.close(fig)
                     saved_count += 1
 
-                    # Update progress every 10 frames
-                    if idx % 10 == 0:
-                        print(f"   Saved {idx}/{total_frames} frames...")
-
                 except Exception as e:
-                    print(f"   ⚠️ Failed to save {frame_key}: {e}")
                     plt.close(fig)
-
-        print(f"✅ Saved {saved_count} 3D visualization frames to: {fig_dir}")
 
     def sync_results_to_input(self):
         """Copy all results from trial_output back to original input path."""
         if not self.original_trial_path:
-            print(f"⚠️ No original path configured - skipping sync")
-            print(f"   Results remain in trial_output/")
+            self.status_label.config(text="⚠️ No original path - results saved to trial_output only", foreground="orange")
             return
 
         import shutil
@@ -1247,23 +1668,41 @@ class SkeletonExtractorUI:
 
         destination_path = self.original_trial_path
 
+        if not source_path.exists():
+            return
+
+        self.status_label.config(text="Syncing results to input folder...", foreground="blue")
+        self.root.update()
+
         # List of files/folders to copy
         items_to_sync = [
+            # Human skeleton and pointing analysis
             "processed_gesture.csv",
             "2d_pointing_trace.png",
             "skeleton_2d.json",
-            "detection_summary.txt",
             "pointing_hand.json",
+
+            # Target detection
+            "target_detections_cam_frame.json",
+            "ground_plane_transform.json",
+
+            # Subject detection (dog/baby)
+            "detection_summary.txt",
             "dog_detection_results.json",
             "baby_detection_results.json",
+
+            # Dog analysis outputs
+            "dog_distance_to_targets.png",
+            "processed_dog_result_table.csv",
+            "dog_result_trace2d.png",
+
+            # 3D visualizations
             "fig"  # entire folder
         ]
 
-        print(f"\n📂 Syncing results from trial_output to original path...")
-        print(f"   Source: {source_path}")
-        print(f"   Destination: {destination_path}")
-
         copied_count = 0
+        skipped_count = 0
+
         # Copy each item
         for item_name in items_to_sync:
             src = source_path / item_name
@@ -1272,15 +1711,80 @@ class SkeletonExtractorUI:
             if src.exists():
                 try:
                     if src.is_dir():
+                        # Copy directory
                         shutil.copytree(src, dst, dirs_exist_ok=True)
                     else:
+                        # Copy file
                         shutil.copy2(src, dst)
-                    print(f"   ✓ Copied {item_name}")
                     copied_count += 1
                 except Exception as e:
-                    print(f"   ⚠️ Failed to copy {item_name}: {e}")
+                    skipped_count += 1
+            else:
+                skipped_count += 1
 
-        print(f"✅ Synced {copied_count} items to: {destination_path}")
+        # Also copy any additional files that might have been generated
+        # (e.g., DLC output files, additional analysis files)
+        try:
+            for item in source_path.iterdir():
+                if item.is_file():
+                    # Check if it's not already in our list
+                    if item.name not in [Path(name).name for name in items_to_sync if not Path(source_path / name).is_dir()]:
+                        # Copy additional files (e.g., temp videos, DLC outputs)
+                        if item.suffix in ['.json', '.csv', '.png', '.txt', '.h5', '.mp4']:
+                            dst = destination_path / item.name
+                            try:
+                                shutil.copy2(item, dst)
+                                copied_count += 1
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
+        # Update status with sync results
+        if copied_count > 0:
+            self.status_label.config(
+                text=f"✅ Synced {copied_count} files/folders to: {destination_path.name}",
+                foreground="green"
+            )
+
+            # Clean up trial_output after successful sync
+            try:
+                self.status_label.config(text="Cleaning up trial_output...", foreground="blue")
+                self.root.update()
+
+                # Remove the specific trial folder from trial_output
+                if source_path.exists():
+                    shutil.rmtree(source_path)
+
+                # If the parent trial folder is now empty, remove it too
+                parent_trial_folder = source_path.parent
+                if parent_trial_folder != Path("trial_output") and parent_trial_folder.exists():
+                    # Check if empty
+                    if not any(parent_trial_folder.iterdir()):
+                        shutil.rmtree(parent_trial_folder)
+
+                # If trial_output is now completely empty, remove it
+                trial_output = Path("trial_output")
+                if trial_output.exists():
+                    # Check if empty
+                    if not any(trial_output.iterdir()):
+                        shutil.rmtree(trial_output)
+
+                self.status_label.config(
+                    text=f"✅ Synced {copied_count} files and cleaned up trial_output",
+                    foreground="green"
+                )
+            except Exception as e:
+                # Cleanup failed, but sync succeeded - not critical
+                self.status_label.config(
+                    text=f"✅ Synced {copied_count} files (cleanup warning: {str(e)})",
+                    foreground="green"
+                )
+        else:
+            self.status_label.config(
+                text="⚠️ No files synced",
+                foreground="orange"
+            )
 
     def update_display(self):
         """Update canvas display."""
@@ -1352,7 +1856,7 @@ class SkeletonExtractorUI:
                     'head_orientation_origin': head_origin.tolist()
                 }
             except Exception as e:
-                print(f"Could not compute head orientation: {e}")
+                pass
 
             try:
                 plot_skeleton_3d(
@@ -1365,28 +1869,19 @@ class SkeletonExtractorUI:
                     head_orientation=head_orientation
                 )
             except Exception as e:
-                print(f"\n❌ ERROR in 3D visualization:")
-                print(f"   {type(e).__name__}: {e}")
+                pass
                 import traceback
                 traceback.print_exc()
 
-        # Plot dog skeleton if available (blue)
+        # Plot dog as triangle with facing arrow (simplified visualization)
         if self.current_dog_result and self.current_dog_result.keypoints_3d:
             has_data = True
-            self._plot_subject_skeleton_3d(
-                self.current_dog_result.keypoints_3d,
-                color='blue',
-                label='Dog'
-            )
+            self._plot_dog_simplified_3d(self.current_dog_result.keypoints_3d)
 
-        # Plot baby skeleton if available (yellow)
+        # Plot baby simplified if available (yellow triangle + arrow)
         if self.current_baby_result and self.current_baby_result.keypoints_3d:
             has_data = True
-            self._plot_subject_skeleton_3d(
-                self.current_baby_result.keypoints_3d,
-                color='yellow',
-                label='Baby'
-            )
+            self._plot_baby_simplified_3d(self.current_baby_result.keypoints_3d)
 
         if not has_data:
             self.plot_ax.text(0, 0, 0, 'No 3D data', fontsize=14, ha='center')
@@ -1427,6 +1922,296 @@ class SkeletonExtractorUI:
             ys = [kp[1] for kp in valid_kps]
             zs = [kp[2] for kp in valid_kps]
             self.plot_ax.scatter(xs, ys, zs, c=color, marker='o', s=50, label=label)
+
+    def _plot_dog_simplified_3d(self, keypoints_3d):
+        """
+        Plot dog as a triangle at centroid with directional arrow showing facing direction.
+
+        Args:
+            keypoints_3d: List of 33 3D keypoints [[x, y, z], ...]
+        """
+        # MediaPipe keypoint indices
+        NOSE = 0
+        LEFT_SHOULDER = 11
+        RIGHT_SHOULDER = 12
+        LEFT_HIP = 23
+        RIGHT_HIP = 24
+
+        # Get key points for computing centroid and direction
+        nose = np.array(keypoints_3d[NOSE]) if NOSE < len(keypoints_3d) else None
+        left_shoulder = np.array(keypoints_3d[LEFT_SHOULDER]) if LEFT_SHOULDER < len(keypoints_3d) else None
+        right_shoulder = np.array(keypoints_3d[RIGHT_SHOULDER]) if RIGHT_SHOULDER < len(keypoints_3d) else None
+        left_hip = np.array(keypoints_3d[LEFT_HIP]) if LEFT_HIP < len(keypoints_3d) else None
+        right_hip = np.array(keypoints_3d[RIGHT_HIP]) if RIGHT_HIP < len(keypoints_3d) else None
+
+        # Filter valid keypoints (not [0, 0, 0])
+        def is_valid(kp):
+            return kp is not None and not (kp[0] == 0 and kp[1] == 0 and kp[2] == 0)
+
+        valid_points = []
+        if is_valid(nose):
+            valid_points.append(nose)
+        if is_valid(left_shoulder):
+            valid_points.append(left_shoulder)
+        if is_valid(right_shoulder):
+            valid_points.append(right_shoulder)
+        if is_valid(left_hip):
+            valid_points.append(left_hip)
+        if is_valid(right_hip):
+            valid_points.append(right_hip)
+
+        if len(valid_points) < 2:
+            # Not enough valid points
+            return
+
+        # Compute centroid (center of torso)
+        centroid = np.mean(valid_points, axis=0)
+
+        # Compute facing direction: from hip to shoulder (direction vector)
+        if (is_valid(left_shoulder) or is_valid(right_shoulder)) and \
+           (is_valid(left_hip) or is_valid(right_hip)):
+            # Compute hip center
+            hip_points = []
+            if is_valid(left_hip):
+                hip_points.append(left_hip)
+            if is_valid(right_hip):
+                hip_points.append(right_hip)
+            hip_center = np.mean(hip_points, axis=0)
+
+            # Compute shoulder center
+            shoulder_points = []
+            if is_valid(left_shoulder):
+                shoulder_points.append(left_shoulder)
+            if is_valid(right_shoulder):
+                shoulder_points.append(right_shoulder)
+            shoulder_center = np.mean(shoulder_points, axis=0)
+
+            # Direction vector from hip to shoulder
+            direction = shoulder_center - hip_center
+            direction_norm = np.linalg.norm(direction)
+            if direction_norm > 0.01:  # Only if significant distance
+                direction = direction / direction_norm  # Normalize
+            else:
+                direction = None
+        else:
+            direction = None
+
+        # Draw triangle at centroid (top view, like a marker)
+        triangle_size = 0.15  # meters
+        triangle_color = 'blue'
+
+        # Create triangle vertices (in XY plane, pointing in Z direction if no head)
+        if direction is not None:
+            # Orient triangle towards facing direction
+            # Project direction onto XY plane
+            forward = np.array([direction[0], direction[1], 0])
+            forward_norm = np.linalg.norm(forward)
+            if forward_norm > 0.01:
+                forward = forward / forward_norm
+            else:
+                forward = np.array([0, 0, 1])  # Default forward
+
+            # Perpendicular vector
+            right = np.array([-forward[1], forward[0], 0])
+
+            # Triangle vertices: front tip, left back, right back
+            tip = centroid + forward * triangle_size
+            left_back = centroid - forward * triangle_size * 0.5 + right * triangle_size * 0.5
+            right_back = centroid - forward * triangle_size * 0.5 - right * triangle_size * 0.5
+        else:
+            # Default triangle orientation
+            tip = centroid + np.array([0, 0, triangle_size])
+            left_back = centroid + np.array([-triangle_size * 0.5, 0, -triangle_size * 0.5])
+            right_back = centroid + np.array([triangle_size * 0.5, 0, -triangle_size * 0.5])
+
+        # Draw filled triangle
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        triangle_verts = [np.array([tip, left_back, right_back, tip])]
+        triangle_poly = Poly3DCollection(triangle_verts, alpha=0.6, facecolor=triangle_color, edgecolor='darkblue', linewidths=2)
+        self.plot_ax.add_collection3d(triangle_poly)
+
+        # Draw centroid point (large square block for subject)
+        self.plot_ax.scatter([centroid[0]], [centroid[1]], [centroid[2]],
+                           c='darkblue', marker='s', s=500, edgecolors='black', linewidths=3,
+                           label='Dog (Subject)', zorder=10)
+
+        # Draw facing arrow if direction is valid (from hip to shoulder)
+        if direction is not None:
+            # Compute actual hip and shoulder centers for arrow
+            hip_points = []
+            if is_valid(left_hip):
+                hip_points.append(left_hip)
+            if is_valid(right_hip):
+                hip_points.append(right_hip)
+            hip_center = np.mean(hip_points, axis=0) if hip_points else centroid
+
+            shoulder_points = []
+            if is_valid(left_shoulder):
+                shoulder_points.append(left_shoulder)
+            if is_valid(right_shoulder):
+                shoulder_points.append(right_shoulder)
+            shoulder_center = np.mean(shoulder_points, axis=0) if shoulder_points else centroid
+
+            # Arrow length is the distance from hip to shoulder
+            arrow_vec = shoulder_center - hip_center
+            arrow_length = np.linalg.norm(arrow_vec)
+
+            # Draw arrow from hip to shoulder (endpoint at shoulder)
+            self.plot_ax.quiver(
+                hip_center[0], hip_center[1], hip_center[2],
+                arrow_vec[0], arrow_vec[1], arrow_vec[2],
+                color='red', arrow_length_ratio=0.2, linewidth=2.5, label='Dog facing'
+            )
+
+            # Add text label at shoulder (endpoint)
+            label_pos = shoulder_center + direction * 0.1  # Slightly beyond shoulder
+            self.plot_ax.text(label_pos[0], label_pos[1], label_pos[2],
+                            'HEAD', fontsize=9, color='red', weight='bold')
+
+    def _plot_baby_simplified_3d(self, keypoints_3d):
+        """
+        Plot baby as a triangle at centroid with directional arrow showing facing direction.
+
+        Args:
+            keypoints_3d: List of 33 3D keypoints [[x, y, z], ...]
+        """
+        # MediaPipe keypoint indices
+        NOSE = 0
+        LEFT_SHOULDER = 11
+        RIGHT_SHOULDER = 12
+        LEFT_HIP = 23
+        RIGHT_HIP = 24
+
+        # Get key points for computing centroid and direction
+        nose = np.array(keypoints_3d[NOSE]) if NOSE < len(keypoints_3d) else None
+        left_shoulder = np.array(keypoints_3d[LEFT_SHOULDER]) if LEFT_SHOULDER < len(keypoints_3d) else None
+        right_shoulder = np.array(keypoints_3d[RIGHT_SHOULDER]) if RIGHT_SHOULDER < len(keypoints_3d) else None
+        left_hip = np.array(keypoints_3d[LEFT_HIP]) if LEFT_HIP < len(keypoints_3d) else None
+        right_hip = np.array(keypoints_3d[RIGHT_HIP]) if RIGHT_HIP < len(keypoints_3d) else None
+
+        # Filter valid keypoints (not [0, 0, 0])
+        def is_valid(kp):
+            return kp is not None and not (kp[0] == 0 and kp[1] == 0 and kp[2] == 0)
+
+        valid_points = []
+        if is_valid(nose):
+            valid_points.append(nose)
+        if is_valid(left_shoulder):
+            valid_points.append(left_shoulder)
+        if is_valid(right_shoulder):
+            valid_points.append(right_shoulder)
+        if is_valid(left_hip):
+            valid_points.append(left_hip)
+        if is_valid(right_hip):
+            valid_points.append(right_hip)
+
+        if len(valid_points) < 2:
+            # Not enough valid points
+            return
+
+        # Compute centroid (center of torso)
+        centroid = np.mean(valid_points, axis=0)
+
+        # Compute facing direction: from hip to shoulder (direction vector)
+        if (is_valid(left_shoulder) or is_valid(right_shoulder)) and \
+           (is_valid(left_hip) or is_valid(right_hip)):
+            # Compute hip center
+            hip_points = []
+            if is_valid(left_hip):
+                hip_points.append(left_hip)
+            if is_valid(right_hip):
+                hip_points.append(right_hip)
+            hip_center = np.mean(hip_points, axis=0)
+
+            # Compute shoulder center
+            shoulder_points = []
+            if is_valid(left_shoulder):
+                shoulder_points.append(left_shoulder)
+            if is_valid(right_shoulder):
+                shoulder_points.append(right_shoulder)
+            shoulder_center = np.mean(shoulder_points, axis=0)
+
+            # Direction vector from hip to shoulder
+            direction = shoulder_center - hip_center
+            direction_norm = np.linalg.norm(direction)
+            if direction_norm > 0.01:  # Only if significant distance
+                direction = direction / direction_norm  # Normalize
+            else:
+                direction = None
+        else:
+            direction = None
+
+        # Draw triangle at centroid (top view, like a marker)
+        triangle_size = 0.15  # meters
+        triangle_color = 'yellow'
+
+        # Create triangle vertices (in XY plane, pointing in Z direction if no head)
+        if direction is not None:
+            # Orient triangle towards facing direction
+            # Project direction onto XY plane
+            forward = np.array([direction[0], direction[1], 0])
+            forward_norm = np.linalg.norm(forward)
+            if forward_norm > 0.01:
+                forward = forward / forward_norm
+            else:
+                forward = np.array([0, 0, 1])  # Default forward
+
+            # Perpendicular vector
+            right = np.array([-forward[1], forward[0], 0])
+
+            # Triangle vertices: front tip, left back, right back
+            tip = centroid + forward * triangle_size
+            left_back = centroid - forward * triangle_size * 0.5 + right * triangle_size * 0.5
+            right_back = centroid - forward * triangle_size * 0.5 - right * triangle_size * 0.5
+        else:
+            # Default triangle orientation
+            tip = centroid + np.array([0, 0, triangle_size])
+            left_back = centroid + np.array([-triangle_size * 0.5, 0, -triangle_size * 0.5])
+            right_back = centroid + np.array([triangle_size * 0.5, 0, -triangle_size * 0.5])
+
+        # Draw filled triangle
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        triangle_verts = [np.array([tip, left_back, right_back, tip])]
+        triangle_poly = Poly3DCollection(triangle_verts, alpha=0.6, facecolor=triangle_color, edgecolor='orange', linewidths=2)
+        self.plot_ax.add_collection3d(triangle_poly)
+
+        # Draw centroid point (large square block for subject)
+        self.plot_ax.scatter([centroid[0]], [centroid[1]], [centroid[2]],
+                           c='orange', marker='s', s=500, edgecolors='black', linewidths=3,
+                           label='Baby (Subject)', zorder=10)
+
+        # Draw facing arrow if direction is valid (from hip to shoulder)
+        if direction is not None:
+            # Compute actual hip and shoulder centers for arrow
+            hip_points = []
+            if is_valid(left_hip):
+                hip_points.append(left_hip)
+            if is_valid(right_hip):
+                hip_points.append(right_hip)
+            hip_center = np.mean(hip_points, axis=0) if hip_points else centroid
+
+            shoulder_points = []
+            if is_valid(left_shoulder):
+                shoulder_points.append(left_shoulder)
+            if is_valid(right_shoulder):
+                shoulder_points.append(right_shoulder)
+            shoulder_center = np.mean(shoulder_points, axis=0) if shoulder_points else centroid
+
+            # Arrow length is the distance from hip to shoulder
+            arrow_vec = shoulder_center - hip_center
+            arrow_length = np.linalg.norm(arrow_vec)
+
+            # Draw arrow from hip to shoulder (endpoint at shoulder)
+            self.plot_ax.quiver(
+                hip_center[0], hip_center[1], hip_center[2],
+                arrow_vec[0], arrow_vec[1], arrow_vec[2],
+                color='purple', arrow_length_ratio=0.2, linewidth=2.5, label='Baby facing'
+            )
+
+            # Add text label at shoulder (endpoint)
+            label_pos = shoulder_center + direction * 0.1  # Slightly beyond shoulder
+            self.plot_ax.text(label_pos[0], label_pos[1], label_pos[2],
+                            'HEAD', fontsize=9, color='purple', weight='bold')
 
     def draw_skeleton(self, image, result):
         """Draw skeleton on image."""

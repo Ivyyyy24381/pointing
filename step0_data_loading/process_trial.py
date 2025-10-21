@@ -4,7 +4,7 @@ Process Trial - Load all frames and save to trial_input folder
 This script:
 1. Detects trial folder structure (multi-camera or single-camera)
 2. Finds all available frames
-3. Loads color and depth for each frame
+3. Loads color and depth for each frame in parallel
 4. Saves organized output to trial_input/<trial_name>/
 
 Usage:
@@ -19,9 +19,11 @@ import os
 import sys
 import numpy as np
 import cv2
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import glob
 import shutil
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 # Try to import tqdm, fallback to simple progress
 try:
@@ -48,6 +50,119 @@ from load_trial_data_flexible import (
     load_depth_flexible,
     list_available_cameras
 )
+
+
+def precompute_metadata(trial_path: str, camera_id: Optional[str]) -> Dict[str, Any]:
+    """
+    Precompute expensive operations that would otherwise be repeated per frame.
+
+    This function runs ONCE before parallel processing to detect:
+    - Folder structure
+    - True depth folder location
+    - Depth shape for .raw files
+    - File naming patterns
+
+    Args:
+        trial_path: Path to trial folder
+        camera_id: Camera ID (None for single-camera structure)
+
+    Returns:
+        Dictionary containing precomputed metadata
+    """
+    from load_trial_data_flexible import (
+        detect_folder_structure,
+        detect_true_depth_folder,
+        detect_depth_shape,
+        find_depth_file
+    )
+
+    structure = detect_folder_structure(trial_path)
+    depth_folder_name = detect_true_depth_folder(trial_path, camera_id)
+
+    # Auto-detect depth shape from first available .raw file
+    depth_shape = None
+    if structure == 'multi_camera' and camera_id:
+        for folder_name in ['depth', 'Depth']:
+            depth_folder = os.path.join(trial_path, camera_id, folder_name)
+            if os.path.isdir(depth_folder):
+                raw_files = glob.glob(os.path.join(depth_folder, '*.raw'))
+                if raw_files:
+                    depth_shape = detect_depth_shape(raw_files[0])
+                    break
+    elif structure == 'single_camera':
+        if depth_folder_name:
+            depth_folder = os.path.join(trial_path, depth_folder_name)
+            if os.path.isdir(depth_folder):
+                raw_files = glob.glob(os.path.join(depth_folder, '*.raw'))
+                if raw_files:
+                    depth_shape = detect_depth_shape(raw_files[0])
+
+    metadata = {
+        'structure': structure,
+        'depth_folder_name': depth_folder_name,
+        'depth_shape': depth_shape
+    }
+
+    return metadata
+
+
+def process_single_frame(
+    frame_num: int,
+    trial_path: str,
+    camera_id: Optional[str],
+    output_path: str,
+    metadata: Dict[str, Any]
+) -> Tuple[int, bool, Optional[str]]:
+    """
+    Process a single frame: load color and depth, save to output.
+
+    This function is designed to run in parallel via multiprocessing.Pool.
+
+    Args:
+        frame_num: Frame number to process
+        trial_path: Path to trial folder
+        camera_id: Camera ID (None for single-camera)
+        output_path: Output directory path
+        metadata: Precomputed metadata (structure, depth_folder_name, depth_shape)
+
+    Returns:
+        Tuple of (frame_num, success, error_message)
+    """
+    try:
+        from load_trial_data_flexible import (
+            load_color_flexible,
+            load_depth_flexible
+        )
+
+        # Load color
+        color_success = False
+        try:
+            color_img = load_color_flexible(trial_path, camera_id, frame_num)
+            color_out = os.path.join(output_path, "color", f"frame_{frame_num:06d}.png")
+            cv2.imwrite(color_out, color_img)
+            color_success = True
+        except Exception as e:
+            return (frame_num, False, f"Color failed: {e}")
+
+        # Load depth (with precomputed metadata)
+        depth_success = False
+        try:
+            depth_img = load_depth_flexible(
+                trial_path,
+                camera_id,
+                frame_num,
+                depth_shape=metadata.get('depth_shape')
+            )
+            depth_out = os.path.join(output_path, "depth", f"frame_{frame_num:06d}.npy")
+            np.save(depth_out, depth_img)
+            depth_success = True
+        except Exception as e:
+            return (frame_num, False, f"Depth failed: {e}")
+
+        return (frame_num, True, None)
+
+    except Exception as e:
+        return (frame_num, False, str(e))
 
 
 def find_all_frames(trial_path: str, camera_id: Optional[str] = None) -> List[int]:
@@ -121,19 +236,24 @@ def find_all_frames(trial_path: str, camera_id: Optional[str] = None) -> List[in
 def process_trial(trial_path: str,
                   camera_id: Optional[str] = None,
                   output_base: str = "trial_input",
-                  frame_range: Optional[Tuple[int, int]] = None) -> str:
+                  frame_range: Optional[Tuple[int, int]] = None,
+                  num_workers: int = 8) -> str:
     """
-    Process an entire trial and save to trial_input folder
+    Process an entire trial and save to trial_input folder using parallel processing.
 
     Args:
         trial_path: Path to trial folder (e.g., 'sample_raw_data/trial_1')
         camera_id: Camera ID (e.g., 'cam1', or None for single-camera)
         output_base: Base output directory
         frame_range: Optional (start, end) frame range, None for all frames
+        num_workers: Number of parallel workers (default: 8)
 
     Returns:
         output_path: Path to created output folder
     """
+    import time
+    import json
+
     # Get trial name
     trial_name = os.path.basename(os.path.normpath(trial_path))
 
@@ -176,37 +296,61 @@ def process_trial(trial_path: str,
 
     print(f"\n💾 Output directory: {output_path}")
 
-    # Process frames
-    print(f"\n⚙️ Processing frames...")
+    # Precompute expensive metadata ONCE (instead of per-frame)
+    print(f"\n🔧 Precomputing metadata (folder structure, depth shape, etc.)...")
+    precomputed_metadata = precompute_metadata(trial_path, camera_id)
+    print(f"✅ Metadata precomputed:")
+    print(f"   Structure: {precomputed_metadata['structure']}")
+    print(f"   Depth folder: {precomputed_metadata['depth_folder_name']}")
+    if precomputed_metadata['depth_shape']:
+        print(f"   Depth shape: {precomputed_metadata['depth_shape']}")
+
+    # Prepare worker function with fixed parameters
+    worker_func = partial(
+        process_single_frame,
+        trial_path=trial_path,
+        camera_id=camera_id,
+        output_path=output_path,
+        metadata=precomputed_metadata
+    )
+
+    # Process frames in parallel
+    print(f"\n⚙️ Processing {len(frame_numbers)} frames with {num_workers} workers...")
     successful = 0
     failed = 0
+    errors = []
 
-    for frame_num in tqdm(frame_numbers, desc="Processing"):
-        try:
-            # Load color
-            try:
-                color_img = load_color_flexible(trial_path, camera_id, frame_num)
-                # Save color
-                color_out = os.path.join(output_path, "color", f"frame_{frame_num:06d}.png")
-                cv2.imwrite(color_out, color_img)
-            except Exception as e:
-                tqdm_write(f"⚠️ Frame {frame_num}: Color failed - {e}")
+    start_time = time.time()
 
-            # Load depth
-            try:
-                depth_img = load_depth_flexible(trial_path, camera_id, frame_num)
-                # Save depth as .npy (preserves float precision)
-                depth_out = os.path.join(output_path, "depth", f"frame_{frame_num:06d}.npy")
-                np.save(depth_out, depth_img)
-                tqdm_write(f"✅ Frame {frame_num}: Depth saved")
-            except Exception as e:
-                tqdm_write(f"⚠️ Frame {frame_num}: Depth failed - {e}")
+    # Use multiprocessing Pool for parallel processing
+    with Pool(processes=num_workers) as pool:
+        # Process frames with progress bar
+        results = []
+        for result in tqdm(
+            pool.imap(worker_func, frame_numbers),
+            total=len(frame_numbers),
+            desc="Processing frames",
+            unit="frame"
+        ):
+            results.append(result)
+            frame_num, success, error_msg = result
 
-            successful += 1
+            if success:
+                successful += 1
+            else:
+                failed += 1
+                errors.append((frame_num, error_msg))
 
-        except Exception as e:
-            tqdm_write(f"❌ Frame {frame_num}: Failed - {e}")
-            failed += 1
+    elapsed_time = time.time() - start_time
+    fps = len(frame_numbers) / elapsed_time if elapsed_time > 0 else 0
+
+    # Print errors if any
+    if errors:
+        print(f"\n⚠️ Errors encountered ({len(errors)} frames):")
+        for frame_num, error_msg in errors[:10]:  # Show first 10 errors
+            print(f"   Frame {frame_num}: {error_msg}")
+        if len(errors) > 10:
+            print(f"   ... and {len(errors) - 10} more errors")
 
     # Save metadata
     metadata = {
@@ -217,10 +361,12 @@ def process_trial(trial_path: str,
         'total_frames': len(frame_numbers),
         'successful': successful,
         'failed': failed,
-        'frame_range': [min(frame_numbers), max(frame_numbers)]
+        'frame_range': [min(frame_numbers), max(frame_numbers)],
+        'processing_time_seconds': elapsed_time,
+        'processing_fps': fps,
+        'num_workers': num_workers
     }
 
-    import json
     metadata_path = os.path.join(output_path, "metadata.json")
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
@@ -228,6 +374,9 @@ def process_trial(trial_path: str,
     print(f"\n✅ Processing complete!")
     print(f"   Successful: {successful}/{len(frame_numbers)}")
     print(f"   Failed: {failed}/{len(frame_numbers)}")
+    print(f"   Time: {elapsed_time:.2f} seconds")
+    print(f"   Speed: {fps:.1f} fps")
+    print(f"   Workers: {num_workers}")
     print(f"   Output: {output_path}")
 
     return output_path
