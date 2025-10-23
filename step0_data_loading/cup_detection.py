@@ -5,10 +5,10 @@ import cv2
 from ultralytics import YOLO
 
 # Load YOLOv8 pretrained model
-model = YOLO("runs/detect/train/weights/best.pt")  # lightweight model; can use yolov8s.pt for more accuracy
+model = YOLO("step0_data_loading/best.pt")  # lightweight model; can use yolov8s.pt for more accuracy
 
 # Load image or video frame
-image_path = "/Users/ivy/Downloads/rs_session_20251002_122609/trial_1/cam1/color/frame_000031.png"  # replace with your image path
+image_path = "/home/h2r/Downloads/dog_data/BDL049_Star_side_cam/2/Color/_Color_0713.png"  # replace with your image path
 img = cv2.imread(image_path)
 
 # Run detection
@@ -28,5 +28,3 @@ for r in results:
 
 # Show result
 cv2.imshow("Cup Detection", img)
-cv2.waitKey(0)
-cv2.destroyAllWindows()

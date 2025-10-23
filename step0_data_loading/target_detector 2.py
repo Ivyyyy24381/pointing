@@ -83,7 +83,7 @@ class TargetDetector:
         """Load YOLO model"""
         try:
             from ultralytics import YOLO
-            self.model = YOLO(model_path)
+            self.model = YOLO(model_path, weights_only=True)
             print(f"✅ Loaded YOLO model from: {model_path}")
         except ImportError:
             print("⚠️ ultralytics not installed. Run: pip install ultralytics")
