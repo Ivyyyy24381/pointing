@@ -1,45 +1,39 @@
-absl-py==2.3.1
-attrs==25.3.0
-Bottleneck @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_55txi4fy1u/croot/bottleneck_1731058642212/work
-Brotli @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_f7i0oxypt6/croot/brotli-split_1736182464088/work
-cffi==1.17.1
-contourpy @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_2cvjf0v4ux/croot/contourpy_1732540055997/work
-cycler @ file:///tmp/build/80754af9/cycler_1637851556182/work
-decorator==5.2.1
-flatbuffers==25.2.10
-fonttools @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_ce1jt_55vl/croot/fonttools_1737039388732/work
-imageio==2.37.0
-imageio-ffmpeg==0.6.0
-jax==0.6.2
-jaxlib==0.6.2
-kiwisolver @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_cc2l_z_0ri/croot/kiwisolver_1737039586949/work
-matplotlib==3.10.0
-mediapipe==0.10.21
-ml_dtypes==0.5.1
-moviepy==2.2.1
-numexpr @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_b3kvvt6tc6/croot/numexpr_1730215947700/work
-numpy==1.26.4
-opencv-contrib-python==4.11.0.86
-opt_einsum==3.4.0
-packaging @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_a6_qk3qyg7/croot/packaging_1734472142254/work
-pandas @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_4aifrweohv/croot/pandas_1732735109535/work/dist/pandas-2.2.3-cp312-cp312-macosx_11_0_arm64.whl#sha256=123f63647068e74a9e99f9fd6ab9ee71cd9f6d1c55fa82c75a587a95021910a5
-pillow @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_bfoqpm49mx/croot/pillow_1744613079607/work
-proglog==0.1.12
-protobuf==4.25.8
-pycparser==2.22
-pyparsing @ file:///private/var/folders/nz/j6p8yfhx1mv_0grj5xl4650h0000gp/T/abs_65qfw6vkxg/croot/pyparsing_1731445528142/work
-python-dateutil @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_66ud1l42_h/croot/python-dateutil_1716495741162/work
-python-dotenv==1.1.1
-pytz @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_a4b76c83ik/croot/pytz_1713974318928/work
-PyYAML==6.0.2
-scikit-spatial==9.0.1
-scipy==1.16.0
-sentencepiece==0.2.0
-setuptools==72.1.0
-six @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_03myqm7p6o/croot/six_1744271511946/work
-sounddevice==0.5.2
-tornado @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_63s3osc0_1/croot/tornado_1748956943583/work
-tqdm==4.67.1
-tzdata @ file:///croot/python-tzdata_1746123641790/work
-unicodedata2 @ file:///private/var/folders/k1/30mswbxs7r1g6zwn8y4fyt500000gp/T/abs_b99hn8t9lq/croot/unicodedata2_1736541774279/work
-wheel==0.45.1
+# Pointing Gesture Analysis Pipeline - Requirements
+
+# ⚠️ IMPORTANT: Python Version Compatibility
+# MediaPipe requires Python 3.8 - 3.12 (NOT 3.13+)
+# If you have Python 3.13, create a virtual environment with Python 3.11 or 3.12:
+#   python3.12 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+
+# Core dependencies
+numpy>=1.24.0,<2.0.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Step 0: Data Loading & Target Detection
+pyrealsense2>=2.54.0  # Optional: For live RealSense camera capture
+ultralytics>=8.0.0     # YOLOv8 for cup/target detection
+torch>=2.0.0           # Required by YOLO
+torchvision>=0.15.0    # Required by YOLO
+
+# Step 2: Skeleton Extraction
+mediapipe>=0.10.0  # Human pose detection
+scipy>=1.10.0      # For plane fitting and spatial calculations
+
+# Step 3: Subject Detection
+deeplabcut>=3.0.0  # Dog skeleton detection using SuperAnimal Quadruped model
+
+# Visualization
+matplotlib>=3.7.0  # For 2D/3D plotting
+open3d>=0.17.0     # Optional: For point cloud visualization
+
+# Data handling
+pandas>=2.0.0      # For CSV export and data processing
+
+# GUI - tkinter is included with most Python installations on macOS
+# If tkinter is not available, install Python from python.org
+
+# Development (Optional)
+pytest>=7.0.0  # For testing

@@ -1,26 +1,86 @@
-
-data/test/.DS_Store
-data/.DS_Store
-data/sample/.DS_Store
-data/test/.DS_Store
-.DS_Store
-data/test/.DS_Store
-data/test/.DS_Store
-data/sample/.DS_Store
-data/.DS_Store
-.DS_Store
-data/sample/.DS_Store
-data/test/VConfig/.DS_Store
-data/test/.DS_Store
-dog_data/
-.DS_Store
-.DS_Store
-visualize/__pycache__/gesture_detection.cpython-312.pyc
-code/__pycache__/bag_to_video.cpython-312.pyc
-code/__pycache__/batch_split_bag.cpython-312.pyc
-thirdparty/
-.DS_Store
+# Python
+__pycache__/
 *.pyc
-*.DS_Store
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Data files (large/temporary)
+*.npy
+*.raw
+*.mp4
+*.avi
+
+# Model weights (download separately)
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+
+# Output directories
+trial_input/
+trial_output/
+runs/
+output/
+results/
+
+# Images (except documentation)
 *.png
 *.jpg
+*.jpeg
+!docs/**/*.png
+!docs/**/*.jpg
+
+# Generated data files
+*.json
+*.csv
+*.txt
+
+# But keep important config/documentation files
+!requirements.txt
+!README.md
+!*.md
+!.gitignore
+!.gitattributes
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Test coverage
+.coverage
+htmlcov/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# SAM2 checkpoints (optional downloads)
+thirdparty/segment-anything-2/checkpoints/*.pt

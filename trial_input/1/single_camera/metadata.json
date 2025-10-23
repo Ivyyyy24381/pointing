@@ -1,0 +1,16 @@
+{
+  "trial_path": "/Users/ivy/Downloads/dog_data/CCD0194_side_cam/1",
+  "trial_name": "1",
+  "camera_id": "single_camera",
+  "structure": "single_camera",
+  "total_frames": 136,
+  "successful": 136,
+  "failed": 0,
+  "frame_range": [
+    2172,
+    2307
+  ],
+  "processing_time_seconds": 2.4358489513397217,
+  "processing_fps": 55.83269025166759,
+  "num_workers": 8
+}
