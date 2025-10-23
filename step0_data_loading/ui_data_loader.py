@@ -600,6 +600,9 @@ class DataLoaderUI:
 
     def preload_surrounding_frames(self, current_idx):
         """Preload frames around current position for faster browsing"""
+        if not self.cache_enabled or not self.data_manager:
+            return
+
         # Determine range to preload
         start_idx = max(0, current_idx - self.preload_window)
         end_idx = min(len(self.available_frames) - 1, current_idx + self.preload_window)
@@ -614,20 +617,27 @@ class DataLoaderUI:
         if not frames_to_load:
             return
 
-        # Batch load frames
-        try:
-            loaded_frames = self.trial_input_manager.batch_load_frames(
-                trial_name=self.current_trial,
-                camera_id=self.current_camera,
-                frame_numbers=frames_to_load
-            )
+        # Background thread to preload frames from RAW DATA
+        def preload_thread():
+            try:
+                from load_trial_data_flexible import load_color_flexible, load_depth_flexible
+                trial_info = self.data_manager.get_trial_info(self.current_trial)
 
-            # Add to cache
-            self.frame_cache.update(loaded_frames)
+                # Load frames from raw data
+                for frame_num in frames_to_load:
+                    try:
+                        color = load_color_flexible(trial_info.trial_path, self.current_camera, frame_num)
+                        depth = load_depth_flexible(trial_info.trial_path, self.current_camera, frame_num)
+                        self.frame_cache[frame_num] = (color, depth)
+                    except Exception:
+                        pass  # Skip frames that fail to load
+            except Exception:
+                pass  # Silently ignore errors
 
-        except Exception as e:
-            # Silently ignore preload errors - not critical
-            pass
+        # Run in background thread
+        import threading
+        thread = threading.Thread(target=preload_thread, daemon=True)
+        thread.start()
 
     def display_images(self, color, depth):
         """Display color and depth images"""
