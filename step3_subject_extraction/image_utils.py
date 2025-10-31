@@ -46,6 +46,30 @@ def map_coordinates_from_crop(keypoints, y_offset):
     return mapped
 
 
+def crop_to_upper_half(image, crop_ratio=0.6):
+    """
+    Crop image to upper half for pointing detection (focuses on upper body).
+
+    Args:
+        image: Input image (H, W, C) or (H, W)
+        crop_ratio: Ratio of image height to keep (0.6 = upper 60%)
+
+    Returns:
+        cropped_image: Upper portion of image
+        y_offset: Y-offset for coordinate mapping (always 0 for upper crop)
+    """
+    height = image.shape[0]
+    crop_height = int(height * crop_ratio)
+
+    # Crop from top
+    if len(image.shape) == 3:
+        cropped = image[:crop_height, :, :]
+    else:
+        cropped = image[:crop_height, :]
+
+    return cropped, 0  # y_offset is 0 since we crop from top
+
+
 def map_bbox_from_crop(bbox, y_offset):
     """
     Map bounding box from cropped image back to original image.

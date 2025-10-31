@@ -76,7 +76,8 @@ def determine_pointing_hand_whole_trial(results: List) -> str:
 def process_trial(trial_path: str,
                   camera_id: Optional[str] = None,
                   output_dir: str = "trial_output",
-                  detector_type: str = "mediapipe") -> None:
+                  detector_type: str = "mediapipe",
+                  crop_upper_half: bool = False) -> None:
     """
     Process a single trial and extract skeleton data.
 
@@ -85,6 +86,7 @@ def process_trial(trial_path: str,
         camera_id: Camera ID (e.g., 'cam1')
         output_dir: Base output directory
         detector_type: 'mediapipe' or 'deeplabcut'
+        crop_upper_half: If True, crop upper half to focus on upper body only
     """
     trial_path = Path(trial_path)
 
@@ -118,11 +120,16 @@ def process_trial(trial_path: str,
 
     # Initialize detector
     if detector_type == "mediapipe":
-        print("🤖 Using MediaPipe human pose detector")
+        if crop_upper_half:
+            print("🤖 Using MediaPipe human pose detector (UPPER HALF ONLY)")
+        else:
+            print("🤖 Using MediaPipe human pose detector")
         detector = MediaPipeHumanDetector(
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
-            model_complexity=1
+            model_complexity=1,
+            lower_half_only=False,  # For baby detection (not used here)
+            upper_half_only=crop_upper_half  # Focus on upper body for pointing gestures
         )
     else:
         print(f"❌ Detector type '{detector_type}' not implemented yet")
@@ -264,7 +271,8 @@ def process_trial(trial_path: str,
 
 def process_all_trials(trial_input_dir: str = "trial_input",
                        output_dir: str = "trial_output",
-                       detector_type: str = "mediapipe") -> None:
+                       detector_type: str = "mediapipe",
+                       crop_upper_half: bool = False) -> None:
     """
     Process all trials in trial_input/ directory.
 
@@ -272,6 +280,7 @@ def process_all_trials(trial_input_dir: str = "trial_input",
         trial_input_dir: Base trial input directory
         output_dir: Base output directory
         detector_type: Detector type to use
+        crop_upper_half: If True, crop to upper half to focus on upper body
     """
     trial_input_path = Path(trial_input_dir)
 
@@ -310,7 +319,8 @@ def process_all_trials(trial_input_dir: str = "trial_input",
                 trial_path=trial_path,
                 camera_id=camera_id if camera_id != "single_camera" else None,
                 output_dir=output_dir,
-                detector_type=detector_type
+                detector_type=detector_type,
+                crop_upper_half=crop_upper_half
             )
         except Exception as e:
             print(f"❌ Error processing {trial_path}: {e}")
@@ -350,6 +360,11 @@ def main():
         type=str,
         help="Process specific trial only (e.g., trial_input/trial_1/cam1)"
     )
+    parser.add_argument(
+        "--crop-upper-half",
+        action="store_true",
+        help="Crop to upper 60%% of image to focus on upper body (helps when multiple people in frame)"
+    )
 
     args = parser.parse_args()
 
@@ -358,14 +373,16 @@ def main():
         process_trial(
             trial_path=args.trial,
             output_dir=args.output,
-            detector_type=args.detector
+            detector_type=args.detector,
+            crop_upper_half=args.crop_upper_half
         )
     else:
         # Process all trials
         process_all_trials(
             trial_input_dir=args.trial_input,
             output_dir=args.output,
-            detector_type=args.detector
+            detector_type=args.detector,
+            crop_upper_half=args.crop_upper_half
         )
 
 

@@ -320,8 +320,10 @@ class SkeletonExtractorUI:
                 self.detector = MediaPipeHumanDetector(
                     min_detection_confidence=confidence,
                     min_tracking_confidence=confidence,
-                    model_complexity=complexity
+                    model_complexity=complexity,
+                    upper_half_only=True  # Focus on upper body to avoid detecting multiple people
                 )
+                print("🤖 Human detector initialized with UPPER HALF ONLY mode")
             else:
                 self.detector = None
 

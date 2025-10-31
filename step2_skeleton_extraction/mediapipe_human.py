@@ -48,7 +48,8 @@ class MediaPipeHumanDetector(SkeletonDetector):
                  smooth_landmarks: bool = True,
                  use_optical_flow: bool = True,
                  motion_history_frames: int = 5,
-                 lower_half_only: bool = False):
+                 lower_half_only: bool = False,
+                 upper_half_only: bool = False):
         """
         Initialize MediaPipe Pose detector.
 
@@ -61,6 +62,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
             use_optical_flow: Use optical flow for motion detection
             motion_history_frames: Number of frames to track for motion analysis
             lower_half_only: Process only lower half of image (for baby detection)
+            upper_half_only: Process only upper half of image (for pointing gestures)
         """
         if not MEDIAPIPE_AVAILABLE:
             raise ImportError("MediaPipe is required. Install with: pip install mediapipe")
@@ -82,9 +84,10 @@ class MediaPipeHumanDetector(SkeletonDetector):
         self.use_optical_flow = use_optical_flow
         self.motion_history_frames = motion_history_frames
 
-        # Lower-half processing (for baby detection)
-        self.lower_half_only = lower_half_only
-        self.crop_ratio = 0.6  # Keep lower 50% of image
+        # Image cropping settings
+        self.lower_half_only = lower_half_only  # For baby detection
+        self.upper_half_only = upper_half_only  # For pointing gestures (upper body focus)
+        self.crop_ratio = 0.6  # Keep 60% of image
 
         # History tracking for optical flow
         self.landmark_history = []  # List of past landmarks
@@ -107,17 +110,26 @@ class MediaPipeHumanDetector(SkeletonDetector):
         Returns:
             SkeletonResult or None if no pose detected
         """
-        # Crop to lower half if enabled (for baby detection)
+        # Crop image if enabled
         y_offset = 0
         process_image = image
         process_depth = depth_image
 
         if self.lower_half_only:
-            from .image_utils import crop_to_lower_half
+            # Crop to lower half (for baby detection - avoids adults)
+            from step3_subject_extraction.image_utils import crop_to_lower_half
             process_image, y_offset = crop_to_lower_half(image, self.crop_ratio)
 
             if depth_image is not None:
                 process_depth, _ = crop_to_lower_half(depth_image, self.crop_ratio)
+
+        elif self.upper_half_only:
+            # Crop to upper half (for pointing gestures - focuses on upper body)
+            from step3_subject_extraction.image_utils import crop_to_upper_half
+            process_image, y_offset = crop_to_upper_half(image, self.crop_ratio)
+
+            if depth_image is not None:
+                process_depth, _ = crop_to_upper_half(depth_image, self.crop_ratio)
 
         # Process image
         results = self.pose.process(process_image)
@@ -136,8 +148,9 @@ class MediaPipeHumanDetector(SkeletonDetector):
             landmarks_2d.append((x, y, visibility))
 
         # Map coordinates back to original image if cropped
-        if y_offset > 0:
-            from .image_utils import map_coordinates_from_crop
+        # y_offset is 0 for upper_half_only, >0 for lower_half_only
+        if self.lower_half_only and y_offset > 0:
+            from step3_subject_extraction.image_utils import map_coordinates_from_crop
             # Convert to list format for mapping
             kp_list = [[x, y, vis] for x, y, vis in landmarks_2d]
             mapped_kp = map_coordinates_from_crop(kp_list, y_offset)
