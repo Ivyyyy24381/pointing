@@ -6,6 +6,19 @@ Creates a top-down view (X-Z plane) of the dog's movement trace with:
 - Rainbow colored dots showing the dog's path over time
 - Target locations as gray squares
 - Grid and axis labels
+
+Experiment setup (based on config/targets.yaml):
+- Targets arranged in a CURVED ARC
+- Target 1 & 2 (+X): to human's LEFT (camera's right)
+- Target 3 & 4 (-X): to human's RIGHT (camera's left)
+- Targets at Z: ~2.6-2.9m depth (arc curves away from camera in middle)
+- Dog: CENTER of arc (inside the curve)
+- Human: OUTSIDE of the curve (pointing toward targets/dog)
+
+Camera coordinate frame:
+- +X: camera's right (human's left when facing camera)
+- +Y: down
+- +Z: into scene (depth)
 """
 
 import json
@@ -14,13 +27,26 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
+# Fixed axis ranges based on config/targets.yaml
+# X: targets range from -1.06m to +1.16m
+#    +X = camera's right = human's left (targets 1, 2)
+#    -X = camera's left = human's right (targets 3, 4)
+# Z: targets form arc at ~2.6-2.9m, dog at center (inside arc, ~same depth or closer)
+DEFAULT_X_RANGE = (-1.5, 1.5)   # Normal orientation: -X left, +X right
+DEFAULT_Z_RANGE = (1.5, 5.0)    # Extended range for dog/human movement
+
 
 class DogTraceVisualizer:
     """Visualize dog movement trace in 2D top-down view."""
 
-    def __init__(self):
-        """Initialize visualizer."""
-        pass
+    def __init__(self, use_fixed_axes: bool = True):
+        """
+        Initialize visualizer.
+
+        Args:
+            use_fixed_axes: If True, use fixed axis ranges for consistent comparison
+        """
+        self.use_fixed_axes = use_fixed_axes
 
     def create_trace_plot(self,
                          dog_results_path: Path,
@@ -217,29 +243,36 @@ class DogTraceVisualizer:
         # Add grid
         ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
 
-        # Set axis limits based on target locations with margin
-        if targets:
-            target_xs = [t.get('x', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
-            target_zs = [t.get('z', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
+        # Set axis limits
+        if self.use_fixed_axes:
+            # Use fixed ranges for consistent comparison across trials
+            ax.set_xlim(DEFAULT_X_RANGE)
+            ax.set_ylim(DEFAULT_Z_RANGE)
+        else:
+            # Dynamic limits based on target locations
+            if targets:
+                target_xs = [t.get('x', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
+                target_zs = [t.get('z', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
 
-            if target_xs and target_zs:
-                # Calculate range based on targets
-                min_x = min(target_xs)
-                max_x = max(target_xs)
-                min_z = min(target_zs)
-                max_z = max(target_zs)
+                if target_xs and target_zs:
+                    min_x = min(target_xs)
+                    max_x = max(target_xs)
+                    x_range = max_x - min_x
+                    x_margin = max(x_range * 0.2, 0.5)
+                    ax.set_xlim(min_x - x_margin, max_x + x_margin)
 
-                # Add margin (20% of range or at least 0.5m)
-                x_range = max_x - min_x
-                z_range = max_z - min_z
-                x_margin = max(x_range * 0.2, 0.5)
-                z_margin = max(z_range * 0.2, 0.5)
+            ax.set_ylim(DEFAULT_Z_RANGE)
 
-                ax.set_xlim(min_x - x_margin, max_x + x_margin)
-                ax.set_ylim(min_z - z_margin, max_z + z_margin)
+        # Add statistics info
+        stats_text = f"N={n_points}"
+        if len(trace_points) > 0:
+            x_std = np.std(trace_points[:, 0])
+            z_std = np.std(trace_points[:, 1])
+            stats_text += f" | X: std={x_std:.2f}m | Z: std={z_std:.2f}m"
 
-        # Equal aspect ratio
-        ax.set_aspect('equal', adjustable='box')
+        info_text = "Fixed axes" if self.use_fixed_axes else "Auto axes"
+        ax.text(0.5, 0.02, f"{info_text} | {stats_text}", transform=ax.transAxes,
+                fontsize=8, color='gray', alpha=0.8, ha='center')
 
         # Add legend
         if targets:
@@ -426,26 +459,28 @@ class DogTraceVisualizer:
         ax.set_title(title, fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
 
-        # Set axis limits based on target locations with margin
-        if targets:
-            target_xs = [t.get('x', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
-            target_zs = [t.get('z', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
+        # Set axis limits
+        if self.use_fixed_axes:
+            ax.set_xlim(DEFAULT_X_RANGE)
+            ax.set_ylim(DEFAULT_Z_RANGE)
+        else:
+            if targets:
+                target_xs = [t.get('x', 0) for t in targets if (t.get('x', 0) != 0 or t.get('z', 0) != 0)]
+                if target_xs:
+                    min_x = min(target_xs)
+                    max_x = max(target_xs)
+                    x_range = max_x - min_x
+                    x_margin = max(x_range * 0.2, 0.5)
+                    ax.set_xlim(min_x - x_margin, max_x + x_margin)
+            ax.set_ylim(DEFAULT_Z_RANGE)
 
-            if target_xs and target_zs:
-                min_x = min(target_xs)
-                max_x = max(target_xs)
-                min_z = min(target_zs)
-                max_z = max(target_zs)
+        # Add info text
+        info_text = "Fixed axes" if self.use_fixed_axes else "Auto axes"
+        n_dog_pts = len(dog_trace) if isinstance(dog_trace, np.ndarray) else 0
+        n_human_pts = len(human_trace) if isinstance(human_trace, np.ndarray) else 0
+        ax.text(0.5, 0.02, f"{info_text} | Dog: {n_dog_pts} pts | Human: {n_human_pts} pts",
+                transform=ax.transAxes, fontsize=8, color='gray', alpha=0.8, ha='center')
 
-                x_range = max_x - min_x
-                z_range = max_z - min_z
-                x_margin = max(x_range * 0.2, 0.5)
-                z_margin = max(z_range * 0.2, 0.5)
-
-                ax.set_xlim(min_x - x_margin, max_x + x_margin)
-                ax.set_ylim(min_z - z_margin, max_z + z_margin)
-
-        ax.set_aspect('equal', adjustable='box')
         ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
 
         plt.tight_layout()

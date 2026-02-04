@@ -2,6 +2,15 @@
 Ground plane correction module.
 
 Computes transformation to align the ground plane (where targets are) to horizontal.
+
+IMPORTANT: This module should ONLY correct for camera tilt (rotation around X-axis).
+It should NOT distort the X-Z arrangement of targets, which may be on a curved arc.
+
+Experiment setup:
+- Targets are arranged in a CURVED ARC (not a flat line)
+- Dog is at the CENTER (inside) of the arc
+- Human is on the OUTSIDE of the curve
+- Camera views from outside the arc toward the targets and dog
 """
 
 import numpy as np
@@ -161,11 +170,11 @@ def compute_ground_plane_transform(targets: List[Dict]) -> Optional[np.ndarray]:
 def get_transform_info(R: np.ndarray, plane_normal: np.ndarray) -> Dict:
     """
     Get human-readable info about the transformation.
-    
+
     Args:
         R: rotation matrix
         plane_normal: original plane normal
-        
+
     Returns:
         Dict with transformation info
     """
@@ -174,14 +183,14 @@ def get_transform_info(R: np.ndarray, plane_normal: np.ndarray) -> Dict:
     cos_angle = np.dot(plane_normal, horizontal_normal)
     angle_rad = np.arccos(np.clip(np.abs(cos_angle), 0, 1))
     angle_deg = angle_rad * 180 / np.pi
-    
+
     # Rotation axis
     axis = np.cross(plane_normal, horizontal_normal)
     if np.linalg.norm(axis) > 1e-6:
         axis = axis / np.linalg.norm(axis)
     else:
         axis = np.array([0, 0, 0])
-    
+
     return {
         'angle_deg': angle_deg,
         'angle_rad': angle_rad,
@@ -189,3 +198,114 @@ def get_transform_info(R: np.ndarray, plane_normal: np.ndarray) -> Dict:
         'plane_normal': plane_normal.tolist(),
         'rotation_matrix': R.tolist()
     }
+
+
+def compute_tilt_only_transform(targets: List[Dict]) -> Optional[np.ndarray]:
+    """
+    Compute a TILT-ONLY correction that only rotates around the X-axis.
+
+    This preserves the X-Z spatial arrangement of targets (the arc shape)
+    while correcting for camera tilt. This is preferred over full ground
+    plane rotation when targets are arranged in a curved arc.
+
+    The tilt angle is estimated from the average Y-coordinate variation
+    with depth (Z).
+
+    Args:
+        targets: List of target dicts with 'x', 'y', 'z' keys
+
+    Returns:
+        R: (3, 3) rotation matrix (X-axis rotation only), or None
+    """
+    if not targets or len(targets) < 2:
+        return None
+
+    # Extract positions
+    positions = []
+    for t in targets:
+        if 'x' in t and 'y' in t and 'z' in t:
+            positions.append([t['x'], t['y'], t['z']])
+
+    if len(positions) < 2:
+        return None
+
+    points = np.array(positions)
+
+    # Estimate tilt angle from Y vs Z correlation
+    # If camera is tilted, Y will vary linearly with Z
+    z_vals = points[:, 2]
+    y_vals = points[:, 1]
+
+    # Linear regression: y = a*z + b
+    # Tilt angle = arctan(a)
+    z_mean = z_vals.mean()
+    y_mean = y_vals.mean()
+
+    # Covariance and variance
+    cov_zy = np.sum((z_vals - z_mean) * (y_vals - y_mean))
+    var_z = np.sum((z_vals - z_mean) ** 2)
+
+    if var_z < 1e-6:
+        # All targets at same depth - can't estimate tilt
+        return np.eye(3)
+
+    slope = cov_zy / var_z
+    tilt_angle = np.arctan(slope)
+
+    # If tilt is very small, don't bother
+    if abs(tilt_angle) < 0.01:  # ~0.5 degrees
+        return np.eye(3)
+
+    # Rotation around X-axis to correct tilt
+    # R_x(theta) rotates Y toward Z when positive
+    cos_t = np.cos(-tilt_angle)
+    sin_t = np.sin(-tilt_angle)
+
+    R = np.array([
+        [1, 0, 0],
+        [0, cos_t, -sin_t],
+        [0, sin_t, cos_t]
+    ])
+
+    return R
+
+
+def is_arc_arrangement(targets: List[Dict], threshold: float = 0.15) -> bool:
+    """
+    Check if targets are arranged in an arc (curved) rather than a flat line.
+
+    Targets in an arc will have varying Z (depth) values - edges closer,
+    middle further (or vice versa).
+
+    Args:
+        targets: List of target dicts with 'x', 'y', 'z' keys
+        threshold: Z variation threshold (meters) to consider as arc
+
+    Returns:
+        True if targets appear to be in an arc arrangement
+    """
+    if not targets or len(targets) < 3:
+        return False
+
+    # Extract Z values sorted by X position
+    positions = []
+    for t in targets:
+        if 'x' in t and 'z' in t:
+            positions.append((t['x'], t['z']))
+
+    if len(positions) < 3:
+        return False
+
+    # Sort by X
+    positions.sort(key=lambda p: p[0])
+
+    z_vals = [p[1] for p in positions]
+
+    # Check if middle Z values are different from edge Z values
+    # (characteristic of an arc)
+    edge_z_avg = (z_vals[0] + z_vals[-1]) / 2
+    middle_z_avg = np.mean(z_vals[1:-1]) if len(z_vals) > 2 else z_vals[len(z_vals)//2]
+
+    z_diff = abs(middle_z_avg - edge_z_avg)
+
+    return z_diff > threshold

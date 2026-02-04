@@ -1326,7 +1326,8 @@ class SkeletonExtractorUI:
                     analysis = analyze_pointing_frame(
                         result,
                         self.targets,
-                        pointing_arm=result.metadata.get('pointing_arm', 'right')
+                        pointing_arm=result.metadata.get('pointing_arm', 'right'),
+                        ground_plane_rotation=self.ground_plane_transform
                     )
                     if analysis:
                         analyses[frame_key] = analysis

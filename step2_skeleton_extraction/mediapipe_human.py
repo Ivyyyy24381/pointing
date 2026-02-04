@@ -44,11 +44,12 @@ class MediaPipeHumanDetector(SkeletonDetector):
                  min_detection_confidence: float = 0.5,
                  min_tracking_confidence: float = 0.5,
                  model_complexity: int = 1,
-                 enable_segmentation: bool = False,
+                 enable_segmentation: bool = True,
                  smooth_landmarks: bool = True,
                  use_optical_flow: bool = True,
                  motion_history_frames: int = 5,
-                 lower_half_only: bool = False):
+                 lower_half_only: bool = False,
+                 use_mask_depth: bool = True):
         """
         Initialize MediaPipe Pose detector.
 
@@ -56,11 +57,12 @@ class MediaPipeHumanDetector(SkeletonDetector):
             min_detection_confidence: Minimum confidence for detection
             min_tracking_confidence: Minimum confidence for tracking
             model_complexity: 0, 1, or 2 (higher = more accurate but slower)
-            enable_segmentation: Enable person segmentation
+            enable_segmentation: Enable person segmentation (default True for stable depth)
             smooth_landmarks: Enable landmark smoothing
             use_optical_flow: Use optical flow for motion detection
             motion_history_frames: Number of frames to track for motion analysis
             lower_half_only: Process only lower half of image (for baby detection)
+            use_mask_depth: Use segmentation mask for stable depth averaging (default True)
         """
         if not MEDIAPIPE_AVAILABLE:
             raise ImportError("MediaPipe is required. Install with: pip install mediapipe")
@@ -81,6 +83,10 @@ class MediaPipeHumanDetector(SkeletonDetector):
         # Optical flow settings
         self.use_optical_flow = use_optical_flow
         self.motion_history_frames = motion_history_frames
+
+        # Mask-based depth settings
+        self.use_mask_depth = use_mask_depth
+        self.enable_segmentation = enable_segmentation
 
         # Lower-half processing (for baby detection)
         self.lower_half_only = lower_half_only
@@ -143,17 +149,24 @@ class MediaPipeHumanDetector(SkeletonDetector):
             mapped_kp = map_coordinates_from_crop(kp_list, y_offset)
             landmarks_2d = [(x, y, vis) for x, y, vis in mapped_kp]
 
+        # Get segmentation mask if available
+        segmentation_mask = None
+        if self.enable_segmentation and hasattr(results, 'segmentation_mask') and results.segmentation_mask is not None:
+            segmentation_mask = results.segmentation_mask
+
         # Compute 3D landmarks using hybrid approach:
+        # - Segmentation mask for stable depth averaging (reduces noise)
         # - Depth image for accurate hip center position
         # - MediaPipe world landmarks for smooth relative limb positions
         landmarks_3d = None
         if depth_image is not None and results.pose_world_landmarks:
-            # Use hybrid method: depth + MediaPipe world landmarks
+            # Use hybrid method: mask-averaged depth + MediaPipe world landmarks
             landmarks_3d = self._compute_3d_from_mediapipe_world(
                 results.pose_world_landmarks,
                 landmarks_2d,
                 depth_image,
-                fx, fy, cx, cy
+                fx, fy, cx, cy,
+                segmentation_mask=segmentation_mask
             )
 
         # Update landmark history for motion tracking
@@ -196,7 +209,8 @@ class MediaPipeHumanDetector(SkeletonDetector):
                                         landmarks_2d: List[tuple],
                                         depth_image: np.ndarray,
                                         fx: float, fy: float,
-                                        cx: float, cy: float) -> List[tuple]:
+                                        cx: float, cy: float,
+                                        segmentation_mask: Optional[np.ndarray] = None) -> List[tuple]:
         """
         Convert MediaPipe world landmarks to camera frame using depth for scale.
 
@@ -206,7 +220,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
         - Scale: metric (meters) but relative to body size
 
         We:
-        1. Get hip center depth from depth image
+        1. Get hip center depth from segmentation mask (stable) or depth image
         2. Use MediaPipe world landmarks (smoother, less noisy)
         3. Transform from person frame to camera frame
         4. Scale using actual depth
@@ -217,6 +231,7 @@ class MediaPipeHumanDetector(SkeletonDetector):
             depth_image: Depth image in meters (H, W)
             fx, fy: Camera focal lengths
             cx, cy: Camera principal point
+            segmentation_mask: Optional segmentation mask for stable depth averaging
 
         Returns:
             List of (x, y, z) tuples in camera frame (meters)
@@ -225,48 +240,53 @@ class MediaPipeHumanDetector(SkeletonDetector):
         RIGHT_HIP = 24
         h, w = depth_image.shape[:2]
 
-        # print(f"\n🔍 HYBRID 3D COMPUTATION DEBUG:")
-        # print(f"   Depth image shape: {depth_image.shape}")
+        hip_center_depth = None
+        hip_center_2d_x = None
+        hip_center_2d_y = None
 
-        # Step 1: Get hip center depth from depth image
-        left_hip_2d = landmarks_2d[LEFT_HIP]
-        right_hip_2d = landmarks_2d[RIGHT_HIP]
+        # Step 1: Try to get stable depth from segmentation mask first
+        if self.use_mask_depth and segmentation_mask is not None:
+            stable_depth, centroid = self._get_stable_depth_from_mask(
+                segmentation_mask, depth_image, landmarks_2d, torso_region=True
+            )
+            if stable_depth is not None and centroid is not None:
+                hip_center_depth = stable_depth
+                # Use landmark-based hip center for 2D position (more accurate than mask centroid)
+                left_hip_2d = landmarks_2d[LEFT_HIP]
+                right_hip_2d = landmarks_2d[RIGHT_HIP]
+                hip_center_2d_x = (left_hip_2d[0] + right_hip_2d[0]) / 2
+                hip_center_2d_y = (left_hip_2d[1] + right_hip_2d[1]) / 2
 
-        # print(f"   Left hip 2D (pixel):  ({left_hip_2d[0]:.1f}, {left_hip_2d[1]:.1f})")
-        # print(f"   Right hip 2D (pixel): ({right_hip_2d[0]:.1f}, {right_hip_2d[1]:.1f})")
+        # Step 2: Fall back to single-pixel hip depth if mask method failed
+        if hip_center_depth is None:
+            left_hip_2d = landmarks_2d[LEFT_HIP]
+            right_hip_2d = landmarks_2d[RIGHT_HIP]
 
-        # Get depth at hip positions
-        x_left = int(np.clip(left_hip_2d[0], 0, w - 1))
-        y_left = int(np.clip(left_hip_2d[1], 0, h - 1))
-        x_right = int(np.clip(right_hip_2d[0], 0, w - 1))
-        y_right = int(np.clip(right_hip_2d[1], 0, h - 1))
+            # Get depth at hip positions
+            x_left = int(np.clip(left_hip_2d[0], 0, w - 1))
+            y_left = int(np.clip(left_hip_2d[1], 0, h - 1))
+            x_right = int(np.clip(right_hip_2d[0], 0, w - 1))
+            y_right = int(np.clip(right_hip_2d[1], 0, h - 1))
 
-        depth_left = depth_image[y_left, x_left]
-        depth_right = depth_image[y_right, x_right]
+            depth_left = depth_image[y_left, x_left]
+            depth_right = depth_image[y_right, x_right]
 
-        # print(f"   Left hip depth:  {depth_left:.4f} m at pixel ({x_left}, {y_left})")
-        # print(f"   Right hip depth: {depth_right:.4f} m at pixel ({x_right}, {y_right})")
+            # Average valid depths
+            valid_depths = []
+            if depth_left > 0 and np.isfinite(depth_left):
+                valid_depths.append(depth_left)
+            if depth_right > 0 and np.isfinite(depth_right):
+                valid_depths.append(depth_right)
 
-        # Average valid depths
-        valid_depths = []
-        if depth_left > 0 and np.isfinite(depth_left):
-            valid_depths.append(depth_left)
-        if depth_right > 0 and np.isfinite(depth_right):
-            valid_depths.append(depth_right)
+            if not valid_depths:
+                # No valid depth, fallback to per-landmark depth lookup
+                return self._compute_3d_from_depth(landmarks_2d, depth_image, fx, fy, cx, cy)
 
-        if not valid_depths:
-            print(f"   ⚠️  NO VALID HIP DEPTHS - falling back to per-landmark depth lookup")
-            # No valid depth, fallback to depth lookup method
-            return self._compute_3d_from_depth(landmarks_2d, depth_image, fx, fy, cx, cy)
+            hip_center_depth = np.mean(valid_depths)
+            hip_center_2d_x = (left_hip_2d[0] + right_hip_2d[0]) / 2
+            hip_center_2d_y = (left_hip_2d[1] + right_hip_2d[1]) / 2
 
-        hip_center_depth = np.mean(valid_depths)
-        # print(f"   Hip center depth: {hip_center_depth:.4f} m (average of {len(valid_depths)} valid depths)")
-
-        # Step 2: Get hip center in 2D (for camera frame origin)
-        hip_center_2d_x = (left_hip_2d[0] + right_hip_2d[0]) / 2
-        hip_center_2d_y = (left_hip_2d[1] + right_hip_2d[1]) / 2
-
-        # Hip center in camera frame
+        # Step 3: Compute hip center in camera frame
         hip_center_cam_x = (hip_center_2d_x - cx) * hip_center_depth / fx
         hip_center_cam_y = (hip_center_2d_y - cy) * hip_center_depth / fy
         hip_center_cam_z = hip_center_depth
@@ -376,6 +396,89 @@ class MediaPipeHumanDetector(SkeletonDetector):
             landmarks_3d.append((float(x_3d), float(y_3d), float(z_3d)))
 
         return landmarks_3d
+
+    def _get_stable_depth_from_mask(self,
+                                     segmentation_mask: np.ndarray,
+                                     depth_image: np.ndarray,
+                                     landmarks_2d: List[tuple],
+                                     torso_region: bool = True) -> Tuple[Optional[float], Optional[Tuple[float, float]]]:
+        """
+        Compute stable depth by averaging over the segmentation mask.
+
+        This is more robust than single-pixel depth lookup because:
+        1. Averages over many pixels, reducing noise
+        2. Uses median to reject outliers
+        3. Focuses on torso region for stability
+
+        Args:
+            segmentation_mask: MediaPipe segmentation mask (H, W), values 0-1
+            depth_image: Depth image in meters (H, W)
+            landmarks_2d: List of (x, y, visibility) tuples for torso region
+            torso_region: If True, focus on torso (between shoulders and hips)
+
+        Returns:
+            (stable_depth, (centroid_x, centroid_y)) or (None, None) if failed
+        """
+        if segmentation_mask is None or depth_image is None:
+            return None, None
+
+        h, w = depth_image.shape[:2]
+
+        # Threshold the mask to get binary person region
+        mask_binary = segmentation_mask > 0.5
+
+        if not np.any(mask_binary):
+            return None, None
+
+        # If using torso region, create a bounding box around shoulders and hips
+        if torso_region and len(landmarks_2d) >= 25:
+            LEFT_SHOULDER = 11
+            RIGHT_SHOULDER = 12
+            LEFT_HIP = 23
+            RIGHT_HIP = 24
+
+            try:
+                # Get torso bounding box
+                shoulder_y = min(landmarks_2d[LEFT_SHOULDER][1], landmarks_2d[RIGHT_SHOULDER][1])
+                hip_y = max(landmarks_2d[LEFT_HIP][1], landmarks_2d[RIGHT_HIP][1])
+                left_x = min(landmarks_2d[LEFT_SHOULDER][0], landmarks_2d[LEFT_HIP][0])
+                right_x = max(landmarks_2d[RIGHT_SHOULDER][0], landmarks_2d[RIGHT_HIP][0])
+
+                # Add some padding
+                padding = 20
+                y_min = max(0, int(shoulder_y) - padding)
+                y_max = min(h, int(hip_y) + padding)
+                x_min = max(0, int(left_x) - padding)
+                x_max = min(w, int(right_x) + padding)
+
+                # Create torso-focused mask
+                torso_mask = np.zeros_like(mask_binary)
+                torso_mask[y_min:y_max, x_min:x_max] = mask_binary[y_min:y_max, x_min:x_max]
+
+                # Use torso mask if it has enough pixels
+                if np.sum(torso_mask) > 100:
+                    mask_binary = torso_mask
+            except (IndexError, ValueError):
+                pass  # Fall back to full mask
+
+        # Get depth values where mask is True
+        mask_depths = depth_image[mask_binary]
+
+        # Filter valid depths (positive, finite)
+        valid_depths = mask_depths[(mask_depths > 0.1) & (mask_depths < 10.0) & np.isfinite(mask_depths)]
+
+        if len(valid_depths) < 10:
+            return None, None
+
+        # Use median for robustness against outliers
+        stable_depth = float(np.median(valid_depths))
+
+        # Compute centroid of mask for 2D position
+        ys, xs = np.where(mask_binary)
+        centroid_x = float(np.mean(xs))
+        centroid_y = float(np.mean(ys))
+
+        return stable_depth, (centroid_x, centroid_y)
 
     def _update_landmark_history(self, landmarks_2d: List[tuple], image: np.ndarray):
         """

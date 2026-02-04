@@ -150,33 +150,52 @@ class TargetDetector:
                     if depth_img is not None:
                         center_x, center_y = det.center
 
-                        # Compute average and median depth within bbox
+                        # Use CENTER REGION of bbox (inner 50%) to avoid background pixels
+                        # This gives more accurate depth for the target itself
+                        bbox_w = x2 - x1
+                        bbox_h = y2 - y1
+                        margin_x = int(bbox_w * 0.25)  # 25% margin on each side = inner 50%
+                        margin_y = int(bbox_h * 0.25)
+                        inner_x1 = max(x1 + margin_x, 0)
+                        inner_x2 = min(x2 - margin_x, depth_img.shape[1])
+                        inner_y1 = max(y1 + margin_y, 0)
+                        inner_y2 = min(y2 - margin_y, depth_img.shape[0])
+
+                        # Compute depth from inner region (excludes background at bbox edges)
+                        inner_depth = depth_img[inner_y1:inner_y2, inner_x1:inner_x2]
+                        valid_inner = inner_depth[(inner_depth > 0.1) & (inner_depth < 10.0)]
+
+                        # Also compute full bbox depth for comparison/fallback
                         bbox_depth = depth_img[y1:y2, x1:x2]
-                        valid_depth = bbox_depth[bbox_depth > 0]
+                        valid_full = bbox_depth[(bbox_depth > 0.1) & (bbox_depth < 10.0)]
 
-                        if len(valid_depth) > 0:
-                            det.avg_depth = float(valid_depth.mean())
-                            det.median_depth = float(np.median(valid_depth))
-
-                            # Use average non-zero depth for 3D position calculation
-                            depth_value = det.avg_depth
+                        if len(valid_inner) > 10:
+                            # Prefer inner region median (more robust against background)
+                            det.avg_depth = float(np.mean(valid_inner))
+                            det.median_depth = float(np.median(valid_inner))
+                            depth_value = det.median_depth  # Use median for robustness
                             det.depth = depth_value
+                        elif len(valid_full) > 0:
+                            # Fallback to full bbox
+                            det.avg_depth = float(np.mean(valid_full))
+                            det.median_depth = float(np.median(valid_full))
+                            depth_value = det.median_depth
+                            det.depth = depth_value
+                        else:
+                            # Last resort: center pixel
+                            if 0 <= center_y < depth_img.shape[0] and 0 <= center_x < depth_img.shape[1]:
+                                depth_value = depth_img[center_y, center_x]
+                                if depth_value > 0.1:
+                                    det.depth = depth_value
+                                    det.avg_depth = depth_value
+                                    det.median_depth = depth_value
 
-                            # Convert to 3D camera frame coordinates using bbox center
-                            z = depth_value
+                        # Convert to 3D camera frame coordinates
+                        if det.depth is not None and det.depth > 0:
+                            z = det.depth
                             x = (center_x - cx) * z / fx
                             y = (center_y - cy) * z / fy
                             det.center_3d = (x, y, z)
-                        else:
-                            # Fallback: try depth at center pixel if no valid depth in bbox
-                            if 0 <= center_y < depth_img.shape[0] and 0 <= center_x < depth_img.shape[1]:
-                                depth_value = depth_img[center_y, center_x]
-                                if depth_value > 0:
-                                    z = depth_value
-                                    x = (center_x - cx) * z / fx
-                                    y = (center_y - cy) * z / fy
-                                    det.center_3d = (x, y, z)
-                                    det.depth = depth_value
 
                     detections.append(det)
 
@@ -227,6 +246,104 @@ class TargetDetector:
             cv2.circle(img, center, 5, color, -1)
 
         return img
+
+
+def apply_known_depth_constraint(detections: List[Detection],
+                                  expected_depth: float,
+                                  fx: float, fy: float,
+                                  cx: float, cy: float,
+                                  tolerance: float = 0.5) -> List[Detection]:
+    """
+    Apply a known depth constraint to target detections.
+
+    If you know from your experiment setup that targets are at a specific depth,
+    this function will:
+    1. Warn about targets with detected depth far from expected
+    2. Optionally override depth with expected value
+    3. Recompute 3D positions with constrained depth
+
+    Args:
+        detections: List of Detection objects
+        expected_depth: Known target depth in meters (e.g., 4.0m)
+        fx, fy, cx, cy: Camera intrinsics
+        tolerance: How far detected depth can be from expected before warning (meters)
+
+    Returns:
+        Updated detections with constrained depth
+    """
+    constrained = []
+
+    for det in detections:
+        det_copy = Detection(
+            det.x1, det.y1, det.x2, det.y2,
+            det.confidence, det.label,
+            det.center_3d, det.depth, det.avg_depth, det.median_depth
+        )
+
+        original_depth = det.depth
+        depth_diff = abs(original_depth - expected_depth) if original_depth else float('inf')
+
+        if depth_diff > tolerance:
+            print(f"⚠️ Target {det.label}: detected depth {original_depth:.2f}m "
+                  f"differs from expected {expected_depth:.2f}m by {depth_diff:.2f}m")
+            # Override with expected depth
+            det_copy.depth = expected_depth
+
+        # Recompute 3D position with (possibly constrained) depth
+        center_x, center_y = det_copy.center
+        z = det_copy.depth if det_copy.depth else expected_depth
+        x = (center_x - cx) * z / fx
+        y = (center_y - cy) * z / fy
+        det_copy.center_3d = (x, y, z)
+
+        constrained.append(det_copy)
+
+    return constrained
+
+
+def enforce_coplanarity(detections: List[Detection],
+                        use_median_y: bool = True) -> List[Detection]:
+    """
+    Enforce that all targets lie on the same plane (same Y coordinate).
+
+    This is useful when targets are placed on a table/floor and should
+    have approximately the same height.
+
+    Args:
+        detections: List of Detection objects with center_3d
+        use_median_y: If True, use median Y; otherwise use mean
+
+    Returns:
+        Updated detections with enforced coplanar Y
+    """
+    # Get all Y values
+    y_values = [d.center_3d[1] for d in detections if d.center_3d]
+
+    if not y_values:
+        return detections
+
+    if use_median_y:
+        common_y = float(np.median(y_values))
+    else:
+        common_y = float(np.mean(y_values))
+
+    print(f"📐 Enforcing coplanarity: all targets at Y={common_y:.3f}m")
+
+    constrained = []
+    for det in detections:
+        det_copy = Detection(
+            det.x1, det.y1, det.x2, det.y2,
+            det.confidence, det.label,
+            det.center_3d, det.depth, det.avg_depth, det.median_depth
+        )
+
+        if det_copy.center_3d:
+            x, _, z = det_copy.center_3d
+            det_copy.center_3d = (x, common_y, z)
+
+        constrained.append(det_copy)
+
+    return constrained
 
 
 def get_default_model_path() -> Optional[str]:

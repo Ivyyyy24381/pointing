@@ -9,7 +9,7 @@
 
 # Core dependencies
 numpy>=1.24.0,<2.0.0
-opencv-python>=4.8.0
+opencv-python>=4.8.0,<4.13.0
 Pillow>=10.0.0
 
 # Step 0: Data Loading & Target Detection
@@ -19,7 +19,7 @@ torch>=2.0.0           # Required by YOLO
 torchvision>=0.15.0    # Required by YOLO
 
 # Step 2: Skeleton Extraction
-mediapipe>=0.10.0  # Human pose detection
+mediapipe>=0.10.0,<0.10.22  # Human pose detection (0.10.22+ removed solutions API)
 scipy>=1.10.0      # For plane fitting and spatial calculations
 
 # Step 3: Subject Detection
