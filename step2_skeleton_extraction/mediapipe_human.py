@@ -49,7 +49,8 @@ class MediaPipeHumanDetector(SkeletonDetector):
                  use_optical_flow: bool = True,
                  motion_history_frames: int = 5,
                  lower_half_only: bool = False,
-                 use_mask_depth: bool = True):
+                 use_mask_depth: bool = True,
+                 crop_top_ratio: float = 1.0):
         """
         Initialize MediaPipe Pose detector.
 
@@ -63,6 +64,9 @@ class MediaPipeHumanDetector(SkeletonDetector):
             motion_history_frames: Number of frames to track for motion analysis
             lower_half_only: Process only lower half of image (for baby detection)
             use_mask_depth: Use segmentation mask for stable depth averaging (default True)
+            crop_top_ratio: Keep only this fraction of the image from the top (0.0-1.0).
+                Default 1.0 (no crop). Use 0.6 to keep top 60% and exclude handler
+                in the bottom of the frame.
         """
         if not MEDIAPIPE_AVAILABLE:
             raise ImportError("MediaPipe is required. Install with: pip install mediapipe")
@@ -91,6 +95,9 @@ class MediaPipeHumanDetector(SkeletonDetector):
         # Lower-half processing (for baby detection)
         self.lower_half_only = lower_half_only
         self.crop_ratio = 0.6  # Keep lower 50% of image
+
+        # Upper crop: keep only top portion of image to exclude handler
+        self.crop_top_ratio = crop_top_ratio
 
         # History tracking for optical flow
         self.landmark_history = []  # List of past landmarks
@@ -125,6 +132,15 @@ class MediaPipeHumanDetector(SkeletonDetector):
             if depth_image is not None:
                 process_depth, _ = crop_to_lower_half(depth_image, self.crop_ratio)
 
+        # Crop to top portion to exclude handler in bottom of frame
+        if self.crop_top_ratio < 1.0:
+            h_orig = process_image.shape[0]
+            h_crop = int(h_orig * self.crop_top_ratio)
+            if h_crop > 0:
+                process_image = process_image[:h_crop, :, :]
+                if process_depth is not None:
+                    process_depth = process_depth[:h_crop, :]
+
         # Process image
         results = self.pose.process(process_image)
 
@@ -158,13 +174,15 @@ class MediaPipeHumanDetector(SkeletonDetector):
         # - Segmentation mask for stable depth averaging (reduces noise)
         # - Depth image for accurate hip center position
         # - MediaPipe world landmarks for smooth relative limb positions
+        # Use process_depth (cropped) so dimensions match segmentation mask
+        depth_for_3d = process_depth if process_depth is not None else depth_image
         landmarks_3d = None
-        if depth_image is not None and results.pose_world_landmarks:
+        if depth_for_3d is not None and results.pose_world_landmarks:
             # Use hybrid method: mask-averaged depth + MediaPipe world landmarks
             landmarks_3d = self._compute_3d_from_mediapipe_world(
                 results.pose_world_landmarks,
                 landmarks_2d,
-                depth_image,
+                depth_for_3d,
                 fx, fy, cx, cy,
                 segmentation_mask=segmentation_mask
             )

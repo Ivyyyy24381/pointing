@@ -63,9 +63,10 @@ from step0_data_loading.target_detector import (
 from step2_skeleton_extraction.mediapipe_human import MediaPipeHumanDetector
 from step2_skeleton_extraction.batch_processor import determine_pointing_hand_whole_trial
 
-# Default known target depth from experiment setup (config/targets.yaml)
-# Targets are typically at ~2.8m from the camera
-DEFAULT_TARGET_DEPTH = 2.8
+# Default known target depth from experiment setup
+# Set to None = use actual detected depth from YOLO + depth camera (recommended).
+# The physical layout correction in post-processing handles depth relationships.
+DEFAULT_TARGET_DEPTH = None
 
 # Target ordering convention (from human's perspective facing camera):
 # - Human's LEFT (camera's right, +X): target_1, target_2
@@ -320,7 +321,8 @@ def reprocess_pointing_only(output_path: Path, override_pointing_arm: str,
     Returns:
         True on success, False on failure
     """
-    from step2_skeleton_extraction.mediapipe_human import MediaPipeHumanDetector, DetectionResult
+    from step2_skeleton_extraction.mediapipe_human import MediaPipeHumanDetector
+    from step2_skeleton_extraction.skeleton_base import SkeletonResult
 
     skeleton_file = output_path / "skeleton_2d.json"
     target_file = output_path / "target_detections_cam_frame.json"
@@ -354,8 +356,9 @@ def reprocess_pointing_only(output_path: Path, override_pointing_arm: str,
     # Reconstruct results and recompute arm vectors
     human_results = {}
     for frame_key, data in skeleton_data.items():
-        # Reconstruct DetectionResult
-        result = DetectionResult(
+        # Reconstruct SkeletonResult
+        result = SkeletonResult(
+            frame_number=data.get('frame', 0),
             landmarks_2d=data.get('landmarks_2d', []),
             landmarks_3d=data.get('landmarks_3d', []),
             arm_vectors=data.get('arm_vectors', {}),
@@ -420,8 +423,7 @@ def reprocess_pointing_only(output_path: Path, override_pointing_arm: str,
         # Export CSV
         csv_path = output_path / "processed_gesture.csv"
         export_pointing_analysis_to_csv(
-            analyses, csv_path,
-            targets=targets
+            human_results, analyses, csv_path
         )
         print(f"    Exported: {csv_path.name}")
 
@@ -461,15 +463,20 @@ def reprocess_pointing_only(output_path: Path, override_pointing_arm: str,
 def detect_targets_for_trial(cam_path, output_path, target_frame=1, fx=615.0, fy=615.0, cx=320.0, cy=240.0,
                               expected_target_depth: float = None):
     """
-    Run YOLO target detection on a single frame and save results.
+    Run YOLO target detection, trying multiple frames to guarantee 4 targets.
+
+    Strategy:
+      1. Try the requested frame first
+      2. If != 4 targets, try up to 10 evenly-spaced frames across the trial
+      3. If still != 4, try with lower confidence threshold
+      4. Pick the best result (prefer exactly 4, then closest to 4)
 
     Args:
         cam_path: Path to camera folder
         output_path: Path to save output
-        target_frame: Frame number to use for detection
+        target_frame: Frame number to use for detection (first attempt)
         fx, fy, cx, cy: Camera intrinsics
         expected_target_depth: If provided, constrain targets to this depth (meters)
-            Use this when you know the target distance from your experiment setup.
 
     Returns the list of target dicts, or None on failure.
     """
@@ -478,37 +485,86 @@ def detect_targets_for_trial(cam_path, output_path, target_frame=1, fx=615.0, fy
         print("    ERROR: YOLO model (best.pt) not found")
         return None
 
-    detector = TargetDetector(model_path, confidence_threshold=0.5)
+    color_files = sorted((cam_path / "color").glob("frame_*.png"))
+    if not color_files:
+        print("    ERROR: No color frames found")
+        return None
 
-    color_path = cam_path / "color" / f"frame_{target_frame:06d}.png"
-    depth_path = cam_path / "depth" / f"frame_{target_frame:06d}.npy"
-
-    if not color_path.exists():
-        # Try first available frame
-        color_files = sorted((cam_path / "color").glob("frame_*.png"))
-        if not color_files:
-            print("    ERROR: No color frames found")
-            return None
-        color_path = color_files[0]
-        frame_num = int(color_path.stem.split('_')[-1])
+    def _try_detect(frame_path, detector):
+        """Try detection on a single frame. Returns list of Detection or None."""
+        frame_num = int(frame_path.stem.split('_')[-1])
         depth_path = cam_path / "depth" / f"frame_{frame_num:06d}.npy"
 
-    color_img = cv2.imread(str(color_path))
-    if color_img is None:
-        print(f"    ERROR: Could not read {color_path}")
+        color_img = cv2.imread(str(frame_path))
+        if color_img is None:
+            return None
+
+        depth_img = None
+        if depth_path.exists():
+            depth_img = np.load(str(depth_path))
+            if depth_img.dtype == np.uint16:
+                depth_img = depth_img.astype(np.float32) / 1000.0
+
+        dets = detector.detect(color_img, depth_img, fx=fx, fy=fy, cx=cx, cy=cy)
+        return dets if dets else None
+
+    # Build list of frames to try: requested frame first, then evenly spaced
+    n_total = len(color_files)
+    frames_to_try = []
+
+    # First: the requested frame
+    target_path = cam_path / "color" / f"frame_{target_frame:06d}.png"
+    if target_path.exists():
+        frames_to_try.append(target_path)
+    else:
+        frames_to_try.append(color_files[0])
+
+    # Then: evenly spaced frames across the trial (up to 10)
+    n_samples = min(10, n_total)
+    indices = [int(i * (n_total - 1) / max(n_samples - 1, 1)) for i in range(n_samples)]
+    for idx in indices:
+        if color_files[idx] not in frames_to_try:
+            frames_to_try.append(color_files[idx])
+
+    # Try with normal confidence first, then lower confidence
+    best_detections = None
+    best_count = 0
+
+    for conf_threshold in [0.5, 0.3, 0.2]:
+        detector = TargetDetector(model_path, confidence_threshold=conf_threshold)
+
+        for frame_path in frames_to_try:
+            dets = _try_detect(frame_path, detector)
+            if dets is None:
+                continue
+
+            n_det = len(dets)
+            if n_det == 4:
+                # Perfect — use this immediately
+                print(f"    Detected 4 targets on {frame_path.name} (conf={conf_threshold})")
+                best_detections = dets
+                best_count = 4
+                break
+            elif n_det > best_count or (n_det >= 4 and best_count != 4):
+                # Keep best result so far (prefer >= 4 over < 4)
+                best_detections = dets
+                best_count = n_det
+
+        if best_count == 4:
+            break
+
+        if best_count < 4 and conf_threshold == 0.5:
+            print(f"    Best so far: {best_count} targets at conf=0.5, trying lower confidence...")
+
+    detections = best_detections
+    if detections is None:
+        print(f"    ERROR: Could not detect any targets across {len(frames_to_try)} frames")
         return None
 
-    depth_img = None
-    if depth_path.exists():
-        depth_img = np.load(str(depth_path))
-        if depth_img.dtype == np.uint16:
-            depth_img = depth_img.astype(np.float32) / 1000.0
+    if len(detections) != 4:
+        print(f"    WARNING: Best detection found {len(detections)} targets (not 4)")
 
-    detections = detector.detect(color_img, depth_img, fx=fx, fy=fy, cx=cx, cy=cy)
-    print(f"    Detected {len(detections)} target(s)")
-
-    if not detections:
-        return None
+    print(f"    Using {len(detections)} target(s)")
 
     # Apply known depth constraint if provided
     if expected_target_depth is not None:
@@ -516,7 +572,7 @@ def detect_targets_for_trial(cam_path, output_path, target_frame=1, fx=615.0, fy
         detections = apply_known_depth_constraint(
             detections, expected_target_depth,
             fx=fx, fy=fy, cx=cx, cy=cy,
-            tolerance=0.5  # Allow 50cm tolerance before warning
+            tolerance=0.5
         )
 
     # Enforce coplanarity (all targets at same Y height)
@@ -616,7 +672,8 @@ def process_skeletons_for_trial(cam_path, output_path, targets=None, ground_plan
     detector = MediaPipeHumanDetector(
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
-        model_complexity=1
+        model_complexity=1,
+        crop_top_ratio=0.6  # Keep top 60% of image to exclude handler in bottom
     )
 
     # Initialize Kalman filter for landmark smoothing
@@ -1420,6 +1477,14 @@ def process_single_camera(cam_path, study_path, trial_name, camera_name,
         print(f"    SKIP: No color folder")
         return
 
+    # Skip if already fully processed (crash recovery: re-run picks up where it left off)
+    output_path_check = study_path.parent / f"{study_name}_output" / trial_name / camera_name
+    skeleton_check = output_path_check / "skeleton_2d.json"
+    csv_check = output_path_check / "processed_gesture.csv"
+    if not pointing_only and skeleton_check.exists() and csv_check.exists():
+        print(f"    SKIP: Already processed (skeleton + CSV exist)")
+        return
+
     num_frames = len(list(color_folder.glob("frame_*.png")))
     print(f"    Frames: {num_frames}")
 
@@ -1457,7 +1522,7 @@ def process_single_camera(cam_path, study_path, trial_name, camera_name,
         # Fall back to YOLO detection
         print(f"    [Targets] Detecting on frame {target_frame}...")
         # Use default target depth if not specified
-        depth_to_use = expected_target_depth if expected_target_depth is not None else DEFAULT_TARGET_DEPTH
+        depth_to_use = expected_target_depth  # None = no depth constraint, use actual YOLO depths
         targets = detect_targets_for_trial(cam_path, output_path,
                                            target_frame=target_frame,
                                            fx=fx, fy=fy, cx=cx, cy=cy,

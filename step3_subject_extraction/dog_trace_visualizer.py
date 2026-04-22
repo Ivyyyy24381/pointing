@@ -7,13 +7,13 @@ Creates a top-down view (X-Z plane) of the dog's movement trace with:
 - Target locations as gray squares
 - Grid and axis labels
 
-Experiment setup (based on config/targets.yaml):
+Experiment setup:
 - Targets arranged in a CURVED ARC
 - Target 1 & 2 (+X): to human's LEFT (camera's right)
 - Target 3 & 4 (-X): to human's RIGHT (camera's left)
-- Targets at Z: ~2.6-2.9m depth (arc curves away from camera in middle)
-- Dog: CENTER of arc (inside the curve)
-- Human: OUTSIDE of the curve (pointing toward targets/dog)
+- Targets at Z: ~3.8-4.2m depth (YOLO-detected positions for cam1)
+- Dog: starts near camera (~2m) and moves toward targets
+- Human: between camera and targets, pointing toward targets/dog
 
 Camera coordinate frame:
 - +X: camera's right (human's left when facing camera)
@@ -27,11 +27,11 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
-# Fixed axis ranges based on config/targets.yaml
-# X: targets range from -1.06m to +1.16m
+# Fixed axis ranges based on YOLO-detected target positions (cam1)
+# X: targets range from -0.48m to +0.87m
 #    +X = camera's right = human's left (targets 1, 2)
 #    -X = camera's left = human's right (targets 3, 4)
-# Z: targets form arc at ~2.6-2.9m, dog at center (inside arc, ~same depth or closer)
+# Z: targets at ~3.8-4.2m depth
 DEFAULT_X_RANGE = (-1.5, 1.5)   # Normal orientation: -X left, +X right
 DEFAULT_Z_RANGE = (1.5, 5.0)    # Extended range for dog/human movement
 

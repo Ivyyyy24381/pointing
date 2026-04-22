@@ -15,34 +15,97 @@ import copy
 import argparse
 from matplotlib import cm
 import pandas as pd
-import pyrealsense2 as rs
+try:
+    import pyrealsense2 as rs
+except ImportError:
+    rs = None
 import yaml
 
 from types import SimpleNamespace
 # matplotlib.use('TkAgg')
 # === Paths ===
 
-def interpolate_trace(trace_3d):
+def interpolate_trace(trace_3d, min_valid_ratio=0.1, min_valid_count=3):
+    """
+    Interpolate NaN gaps in 3D trace data.
+
+    Only interpolates BETWEEN valid points (no extrapolation beyond endpoints).
+    Requires a minimum number/fraction of valid points to attempt interpolation,
+    otherwise returns the trace as-is with NaN values preserved.
+    """
     trace_array = np.array(trace_3d, dtype=np.float32)
+    n_frames = len(trace_array)
     for dim in range(3):
         col = trace_array[:, dim]
         nans = np.isnan(col)
         not_nans = ~nans
-        if np.sum(not_nans) >= 2:
-            col[nans] = np.interp(np.flatnonzero(nans), np.flatnonzero(not_nans), col[not_nans])
+        n_valid = np.sum(not_nans)
+
+        # Require minimum valid points to interpolate
+        min_needed = max(min_valid_count, int(n_frames * min_valid_ratio))
+        if n_valid < min_needed:
+            if n_valid < n_frames:
+                print(f"  ⚠️ trace3d dim {dim}: only {n_valid}/{n_frames} valid frames "
+                      f"(need {min_needed}) — skipping interpolation")
+            continue
+
+        if n_valid >= 2:
+            valid_indices = np.flatnonzero(not_nans)
+            first_valid = valid_indices[0]
+            last_valid = valid_indices[-1]
+
+            # Only interpolate BETWEEN first and last valid points (no extrapolation)
+            interior_nans = nans.copy()
+            interior_nans[:first_valid] = False
+            interior_nans[last_valid + 1:] = False
+
+            if np.any(interior_nans):
+                col[interior_nans] = np.interp(
+                    np.flatnonzero(interior_nans),
+                    valid_indices,
+                    col[not_nans]
+                )
         trace_array[:, dim] = col
     return trace_array.tolist()
+
+def smooth_trace(trace_3d, window_size=5):
+    """
+    Apply moving-average smoothing to 3D trace trajectory.
+    Handles NaN values by only averaging valid neighbors.
+    """
+    trace_array = np.array(trace_3d, dtype=np.float32)
+    n = len(trace_array)
+    if n < window_size:
+        return trace_3d
+    smoothed = trace_array.copy()
+    half = window_size // 2
+    for dim in range(3):
+        col = trace_array[:, dim]
+        for i in range(n):
+            start = max(0, i - half)
+            end = min(n, i + half + 1)
+            window = col[start:end]
+            valid = window[~np.isnan(window)]
+            if len(valid) > 0:
+                smoothed[i, dim] = np.mean(valid)
+    return smoothed.tolist()
+
 def get_valid_depth(depth_frame, u, v, patch_size=5):
     """
-    Robustly extract depth at (u, v) by sampling a local patch.
+    Robustly extract depth at (u, v) by sampling progressively larger patches.
+    Tries patch_size first, then escalates to 11 and 21 if no valid depth found.
     Returns median of valid (nonzero) depths, or None if no valid depth.
     """
     h, w = depth_frame.shape
-    half = patch_size // 2
     u, v = int(u), int(v)
-    patch = depth_frame[max(0, v - half):min(h, v + half + 1), max(0, u - half):min(w, u + half + 1)]
-    valid = patch[patch > 0]
-    return np.median(valid) if len(valid) > 0 else None
+    for ps in [patch_size, 11, 21]:
+        half = ps // 2
+        patch = depth_frame[max(0, v - half):min(h, v + half + 1),
+                            max(0, u - half):min(w, u + half + 1)]
+        valid = patch[patch > 0]
+        if len(valid) > 0:
+            return np.median(valid)
+    return None
 
 def pixel_to_3d(u, v, depth, fx, fy, cx, cy):
     """
@@ -339,8 +402,8 @@ def prepare_video_and_json(output_dir, json_path, side_view):
         start_frame_idx = 0
     else:
         use_image_folder = True
-        color_files = sorted([f for f in os.listdir(video_path) if f.endswith(".png")])
-        depth_files = sorted([f for f in os.listdir(depth_video_path) if f.endswith(".raw")])
+        color_files = sorted([f for f in os.listdir(video_path) if f.endswith(".png") and not f.startswith("._")])
+        depth_files = sorted([f for f in os.listdir(depth_video_path) if f.endswith(".raw") and not f.startswith("._")])
         first_img = cv2.imread(os.path.join(video_path, color_files[0]))
         height, width = first_img.shape[:2]
         
@@ -425,6 +488,7 @@ def predict_bbox_with_optical_flow(prev_gray, frame_gray, prev_center, valid_can
 
 def extract_trace_point(kp_cleaned, depth_frame, fx, fy, cx, cy, bbox=None):
     valid_points = []
+    depths = []
     for name, (x_px, y_px) in kp_cleaned.items():
         if 0 <= x_px < depth_frame.shape[1] and 0 <= y_px < depth_frame.shape[0]:
             depth = get_valid_depth(depth_frame, x_px, y_px)
@@ -433,7 +497,18 @@ def extract_trace_point(kp_cleaned, depth_frame, fx, fy, cx, cy, bbox=None):
                 y_m = (y_px - cy) * depth / fy
                 z_m = depth
                 valid_points.append((x_m, y_m, z_m))
+                depths.append(depth)
     if valid_points:
+        # Filter outliers: remove points with depth > 1.5 IQR from median
+        if len(valid_points) >= 3:
+            depths_arr = np.array(depths)
+            median_d = np.median(depths_arr)
+            q1, q3 = np.percentile(depths_arr, [25, 75])
+            iqr = q3 - q1
+            bound = max(iqr * 1.5, 0.3)  # At least 0.3m tolerance
+            mask = np.abs(depths_arr - median_d) <= bound
+            if np.sum(mask) >= 1:
+                valid_points = [p for p, m in zip(valid_points, mask) if m]
         avg_point = np.mean(valid_points, axis=0)
         return tuple(avg_point)
     # Fallback to center of bbox if no valid keypoints
@@ -1164,15 +1239,33 @@ def pose_visualize(json_path, side_view = False, dog= True):
     cap.release() if not use_image_folder else None
     depth_cap.release() if not use_image_folder else None
     out.release()
-    cv2.destroyAllWindows()
+    try:
+        cv2.destroyAllWindows()
+    except cv2.error:
+        pass  # No GUI backend available (headless mode)
     print(f"FRAME INDEX TOTAL LENGTH ------------> {frame_idx}")
     
     processed_json = interpolate_missing_frames(processed_json)
+    # Report depth validity before interpolation
+    n_total = len(trace_3d)
+    n_valid = sum(1 for pt in trace_3d if not np.isnan(pt[0]))
+    print(f"  📊 Depth validity: {n_valid}/{n_total} frames ({100*n_valid/n_total:.1f}%) have valid 3D position")
     trace_3d = interpolate_trace(trace_3d)
-    # Reassign interpolated target_metrics back to processed_json
-    for i in range(len(processed_json)):
-        if i < len(per_frame_target_metrics):
-            processed_json[i]["target_metrics"] = per_frame_target_metrics[i]
+    trace_3d = smooth_trace(trace_3d, window_size=5)
+    # Recompute target distance metrics using smoothed trace positions
+    for i in range(len(trace_3d)):
+        pt = trace_3d[i]
+        if not np.isnan(pt[0]):
+            metrics = compute_target_distances(pt[0], pt[1], pt[2], targets, include_human=True)
+            if i < len(per_frame_target_metrics):
+                per_frame_target_metrics[i] = metrics
+            if i < len(processed_json):
+                processed_json[i]["target_metrics"] = metrics
+        else:
+            if i < len(per_frame_target_metrics):
+                per_frame_target_metrics[i] = {}
+            if i < len(processed_json):
+                processed_json[i]["target_metrics"] = {}
     save_processed_results(processed_json, fps, output_json_path, width, height, depth_frame, intr, SELECTED_NAMES, per_frame_target_metrics, trace_3d, dog=dog)
     plot_trace_and_targets(trace_3d, targets, output_json_path, fps, side_view)
     plot_distance_comparison(per_frame_target_metrics, targets, output_json_path, fps)
